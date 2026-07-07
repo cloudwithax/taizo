@@ -102,6 +102,18 @@ CREATE TABLE IF NOT EXISTS tickets (
     UNIQUE(guild_id, number)
 );
 
+-- audit log configuration per guild
+CREATE TABLE IF NOT EXISTS audit_log_config (
+    guild_id BIGINT PRIMARY KEY,
+    channel_id BIGINT NOT NULL,
+    log_messages BOOLEAN NOT NULL DEFAULT true,
+    log_members BOOLEAN NOT NULL DEFAULT true,
+    log_moderation BOOLEAN NOT NULL DEFAULT true,
+    log_channels BOOLEAN NOT NULL DEFAULT true,
+    log_roles BOOLEAN NOT NULL DEFAULT true,
+    log_voice BOOLEAN NOT NULL DEFAULT true
+);
+
 -- track user role assignments (for unique, limit, temp, verify modes)
 CREATE TABLE IF NOT EXISTS reaction_role_users (
     id SERIAL PRIMARY KEY,

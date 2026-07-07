@@ -1,3 +1,4 @@
+pub mod auditlog;
 pub mod economy;
 pub mod fun;
 pub mod info;
