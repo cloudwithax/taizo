@@ -203,7 +203,7 @@ pub async fn close(
     let channel_id = ctx.channel_id().get() as i64;
     let db = &ctx.data().db;
 
-    let row = sqlx::query_as::<_, (i64, i64, String, bool, String)>(
+    let row = sqlx::query_as::<_, (i32, i64, String, bool, String)>(
         "SELECT t.id, t.creator_id, t.status, c.allow_user_close, c.close_action \
          FROM tickets t JOIN ticket_config c ON t.guild_id = c.guild_id \
          WHERE t.channel_id = $1 AND t.guild_id = $2",
@@ -498,7 +498,7 @@ pub async fn archive(ctx: Context<'_>) -> Result<(), Error> {
     let channel_id = ctx.channel_id().get() as i64;
     let db = &ctx.data().db;
 
-    let row = sqlx::query_as::<_, (i64, String)>(
+    let row = sqlx::query_as::<_, (i32, String)>(
         "SELECT id, status FROM tickets WHERE channel_id = $1 AND guild_id = $2",
     )
     .bind(channel_id)
@@ -584,7 +584,7 @@ pub async fn delete(ctx: Context<'_>) -> Result<(), Error> {
     let channel_id = ctx.channel_id().get() as i64;
     let db = &ctx.data().db;
 
-    let row = sqlx::query_as::<_, (i64, String)>(
+    let row = sqlx::query_as::<_, (i32, String)>(
         "SELECT id, status FROM tickets WHERE channel_id = $1 AND guild_id = $2",
     )
     .bind(channel_id)
@@ -627,7 +627,7 @@ pub async fn transcript(ctx: Context<'_>) -> Result<(), Error> {
     let channel_id = ctx.channel_id().get() as i64;
     let db = &ctx.data().db;
 
-    let row = sqlx::query_as::<_, (i64, i64)>(
+    let row = sqlx::query_as::<_, (i32, i64)>(
         "SELECT id, creator_id FROM tickets WHERE channel_id = $1 AND guild_id = $2 AND status = 'open'",
     )
     .bind(channel_id)
@@ -1029,7 +1029,7 @@ pub async fn handle_ticket_close(
     let channel_id = component.channel_id.get() as i64;
     let user_id = component.user.id.get() as i64;
 
-    let row = sqlx::query_as::<_, (i64, i64, String, bool, String)>(
+    let row = sqlx::query_as::<_, (i32, i64, String, bool, String)>(
         "SELECT t.id, t.creator_id, t.status, c.allow_user_close, c.close_action \
          FROM tickets t JOIN ticket_config c ON t.guild_id = c.guild_id \
          WHERE t.channel_id = $1 AND t.guild_id = $2",

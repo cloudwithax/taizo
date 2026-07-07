@@ -7,13 +7,21 @@ Rust Discord bot (serenity 0.12 + poise 0.6) with PostgreSQL (sqlx). Single crat
 ## Rules
 
 - All visible copy (embed titles, descriptions, field names, field values) must be strictly lowercase. No exceptions.
-
+- Please reference #
 ## Build and run
 
 ```bash
 cargo build
 cargo run
 ```
+
+## When you make changes
+- Use `cargo clippy && cargo check && cargo build` to verify changes
+- Note any pitfalls you experienced in the library/modules in AGENTS.md
+- Commit changes
+- Push changes to feature branch 
+- Merges to main will happen at the developers discretion
+
 
 ## Schema
 
