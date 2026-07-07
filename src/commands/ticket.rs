@@ -27,6 +27,19 @@ pub async fn setup(
     let gid = guild_id.get() as i64;
     let db = &ctx.data().db;
 
+    // validate category is actually a category channel
+    if !matches!(category, serenity::Channel::Guild(ref ch) if ch.kind == serenity::ChannelType::Category) {
+        ctx.send(
+            poise::CreateReply::default().embed(
+                serenity::CreateEmbed::new()
+                    .description(format!("{} is not a category channel. please select a category.", category.mention()))
+                    .color(0xF28080),
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
+
     let category_id = category.id().get();
     let support_role_id = support_role.id.get();
     let panel_channel_id = panel_channel.id().get();
@@ -848,6 +861,23 @@ pub async fn handle_ticket_modal(
     };
 
     let (category_id, support_role_id) = config;
+
+    // validate the category exists and is actually a category
+    let cat_id = serenity::ChannelId::new(category_id as u64);
+    match cat_id.to_channel(ctx).await {
+        Ok(serenity::Channel::Guild(ref ch)) if ch.kind == serenity::ChannelType::Category => {}
+        _ => {
+            let _ = modal.create_response(
+                ctx,
+                serenity::CreateInteractionResponse::Message(
+                    serenity::CreateInteractionResponseMessage::new()
+                        .content("the configured category no longer exists or is invalid. an admin needs to re-run `/ticket setup`.")
+                        .ephemeral(true),
+                ),
+            ).await;
+            return Ok(());
+        }
+    }
 
     let max_number: Option<i32> = match sqlx::query_scalar("SELECT MAX(number) FROM tickets WHERE guild_id = $1")
         .bind(gid)
