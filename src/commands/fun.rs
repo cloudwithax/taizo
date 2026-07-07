@@ -291,35 +291,36 @@ pub async fn cookie(ctx: Context<'_>) -> Result<(), Error> {
     reply
         .edit(
             ctx,
-            poise::CreateReply::default().embed(
-                serenity::CreateEmbed::new()
-                    .description("Eat the cookie!")
-                    .color(0xF28080),
-            ),
+            poise::CreateReply::default()
+                .embed(
+                    serenity::CreateEmbed::new()
+                        .description("Eat the cookie!")
+                        .color(0xF28080),
+                )
+                .components(vec![serenity::CreateActionRow::Buttons(vec![
+                    serenity::CreateButton::new("cookie_eat")
+                        .label("🍪 eat the cookie!")
+                        .style(serenity::ButtonStyle::Danger),
+                ])]),
         )
         .await?;
 
     let msg = reply.message().await?;
-    msg.react(&ctx, serenity::ReactionType::Unicode("🍪".to_string()))
-        .await?;
 
     let start = Instant::now();
 
     use poise::futures_util::StreamExt;
 
-    let reaction = serenity::collector::ReactionCollector::new(&ctx.serenity_context().shard)
+    let interaction = serenity::collector::ComponentInteractionCollector::new(&ctx.serenity_context().shard)
         .message_id(msg.id)
         .timeout(std::time::Duration::from_secs(60))
         .stream()
         .next()
         .await;
 
-    match reaction {
-        Some(reaction) => {
-            let user_id = reaction.user_id.unwrap_or(serenity::UserId::new(0));
-            if user_id == ctx.cache().current_user().id {
-                return Ok(());
-            }
+    match interaction {
+        Some(interaction) => {
+            let user_id = interaction.user.id;
             let elapsed = start.elapsed().as_secs_f64();
             reply
                 .edit(
@@ -335,16 +336,28 @@ pub async fn cookie(ctx: Context<'_>) -> Result<(), Error> {
                     ),
                 )
                 .await?;
+
+            interaction
+                .create_response(
+                    &ctx,
+                    serenity::CreateInteractionResponse::UpdateMessage(
+                        serenity::CreateInteractionResponseMessage::new()
+                            .components(vec![]),
+                    ),
+                )
+                .await?;
         }
         None => {
             reply
                 .edit(
                     ctx,
-                    poise::CreateReply::default().embed(
-                        serenity::CreateEmbed::new()
-                            .description(":x: No one ate the cookie in time!")
-                            .color(0xF28080),
-                    ),
+                    poise::CreateReply::default()
+                        .embed(
+                            serenity::CreateEmbed::new()
+                                .description(":x: No one ate the cookie in time!")
+                                .color(0xF28080),
+                        )
+                        .components(vec![]),
                 )
                 .await?;
         }
@@ -353,11 +366,37 @@ pub async fn cookie(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-/// creates a poll with up to 10 choices (title | choice1 | choice2)
+/// creates a poll with up to 20 choices (title | choice1 | choice2)
+fn parse_duration(input: &str) -> Option<std::time::Duration> {
+    let input = input.trim().to_lowercase();
+    if input.is_empty() {
+        return Some(std::time::Duration::from_secs(86400));
+    }
+    let mut total = 0u64;
+    let mut num = String::new();
+    for c in input.chars() {
+        if c.is_ascii_digit() {
+            num.push(c);
+        } else {
+            let n: u64 = num.parse().ok()?;
+            total += match c {
+                's' => n,
+                'm' => n * 60,
+                'h' => n * 3600,
+                'd' => n * 86400,
+                _ => return None,
+            };
+            num.clear();
+        }
+    }
+    if total < 60 { None } else { Some(std::time::Duration::from_secs(total)) }
+}
+
 #[poise::command(slash_command)]
 pub async fn poll(
     ctx: Context<'_>,
     #[description = "title | choice1 | choice2 ..."] choices: String,
+    #[description = "expiry (e.g. 30m, 2h, 1d). default: 24h"] expiry: Option<String>,
 ) -> Result<(), Error> {
     let choicelist: Vec<&str> = choices.split(" | ").collect();
 
@@ -373,11 +412,11 @@ pub async fn poll(
         return Ok(());
     }
 
-    if choicelist.len() > 11 {
+    if choicelist.len() > 21 {
         ctx.send(
             poise::CreateReply::default().embed(
                 serenity::CreateEmbed::new()
-                    .description("the maximum amount of choices is **10**!")
+                    .description("the maximum amount of choices is **20**!")
                     .color(0xF28080),
             ),
         )
@@ -385,39 +424,143 @@ pub async fn poll(
         return Ok(());
     }
 
-    let emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
+    let duration = match expiry.as_deref().and_then(parse_duration) {
+        Some(d) => d,
+        None => {
+            ctx.send(
+                poise::CreateReply::default().embed(
+                    serenity::CreateEmbed::new()
+                        .description("invalid duration! use formats like `30m`, `2h`, `1d`")
+                        .color(0xF28080),
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    let choice_labels = [
+        "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
+        "11", "12", "13", "14", "15", "16", "17", "18", "19", "20",
+    ];
     let desc: String = choicelist[1..]
         .iter()
         .enumerate()
-        .map(|(i, c)| format!("{} {}", emojis[i], c))
+        .map(|(i, c)| format!("**{}**) {}", choice_labels[i], c))
         .collect::<Vec<_>>()
         .join("\n");
 
-    let reply = ctx
-        .send(
-            poise::CreateReply::default().embed(
+    let buttons: Vec<serenity::CreateButton> = choicelist[1..]
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            serenity::CreateButton::new(format!("poll_{}", i))
+                .label(format!("{} {}", choice_labels[i], c))
+                .style(serenity::ButtonStyle::Primary)
+        })
+        .collect();
+
+    let expires_at = chrono::Utc::now() + chrono::Duration::from_std(duration)
+        .map_err(|e| -> Error { e.into() })?;
+
+    let reply = ctx.send(
+        poise::CreateReply::default()
+            .embed(
                 serenity::CreateEmbed::new()
                     .title(choicelist[0])
                     .description(&desc)
                     .footer(
                         serenity::CreateEmbedFooter::new(format!(
-                            "poll made by {}",
-                            ctx.author().name
+                            "poll made by {} • expires {}",
+                            ctx.author().name,
+                            expires_at.format("%b %d, %Y %H:%M UTC")
                         ))
                         .icon_url(ctx.author().face()),
                     )
                     .timestamp(serenity::Timestamp::now())
                     .color(0xF28080),
-            ),
-        )
-        .await?;
+            )
+            .components(vec![serenity::CreateActionRow::Buttons(buttons)]),
+    )
+    .await?;
 
     let msg = reply.message().await?;
+    sqlx::query("INSERT INTO polls (message_id, channel_id, user_id, expires_at) VALUES ($1, $2, $3, $4)")
+        .bind(msg.id.get() as i64)
+        .bind(ctx.channel_id().get() as i64)
+        .bind(ctx.author().id.get() as i64)
+        .bind(expires_at)
+        .execute(&ctx.data().db)
+        .await?;
 
-    for i in 0..choicelist.len() - 1 {
-        msg.react(&ctx, serenity::ReactionType::Unicode(emojis[i].to_string()))
-            .await?;
-    }
+    let http = ctx.serenity_context().http.clone();
+    let db = ctx.data().db.clone();
+    let channel_id = ctx.channel_id();
+    let message_id = msg.id;
+    let poll_title = choicelist[0].to_string();
+    let poll_choices: Vec<String> = choicelist[1..].iter().map(|s| s.to_string()).collect();
+
+    tokio::spawn(async move {
+        tokio::time::sleep(duration).await;
+
+        let votes: Vec<(i32, i64)> = sqlx::query_as(
+            "SELECT choice_index, COUNT(*) as count FROM poll_votes WHERE message_id = $1 GROUP BY choice_index ORDER BY choice_index",
+        )
+        .bind(message_id.get() as i64)
+        .fetch_all(&db)
+        .await
+        .unwrap_or_default();
+
+        let vote_map: std::collections::HashMap<i32, i64> = votes.into_iter().collect();
+        let total_votes: i64 = vote_map.values().sum();
+
+        let results: String = poll_choices
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let count = vote_map.get(&(i as i32)).copied().unwrap_or(0);
+                let bar_len = if total_votes > 0 {
+                    (count as f64 / total_votes as f64 * 10.0).round() as usize
+                } else {
+                    0
+                };
+                let bar = "█".repeat(bar_len);
+                format!("**{}**) {} — {} vote{} {}", i + 1, c, count, if count == 1 { "" } else { "s" }, bar)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let mut components = Vec::new();
+        for chunk in poll_choices.chunks(5) {
+            let buttons: Vec<serenity::CreateButton> = chunk
+                .iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    let global_idx = components.len() * 5 + i;
+                    serenity::CreateButton::new(format!("poll_{}", global_idx))
+                        .label(format!("{} {}", global_idx + 1, c))
+                        .style(serenity::ButtonStyle::Primary)
+                        .disabled(true)
+                })
+                .collect();
+            components.push(serenity::CreateActionRow::Buttons(buttons));
+        }
+
+        let _ = http.edit_message(
+            channel_id,
+            message_id,
+            &serenity::EditMessage::new()
+                .embed(
+                    serenity::CreateEmbed::new()
+                        .title(&poll_title)
+                        .description(results)
+                        .footer(serenity::CreateEmbedFooter::new(format!("poll ended • {} total vote{}", total_votes, if total_votes == 1 { "" } else { "s" })))
+                        .color(0xF28080),
+                )
+                .components(components),
+            Vec::<serenity::CreateAttachment>::new(),
+        ).await;
+    });
 
     Ok(())
 }
@@ -457,43 +600,202 @@ pub async fn yesno(
     Ok(())
 }
 
-/// fetches a random meme from r/memes
-#[poise::command(slash_command)]
-pub async fn meme(ctx: Context<'_>) -> Result<(), Error> {
-    let client = reqwest::Client::new();
-    let res = client
-        .get("https://reddit.com/r/memes/.json?limit=100")
-        .header("User-Agent", "taizo-bot/1.0")
-        .send()
-        .await?
-        .json::<serde_json::Value>()
+pub async fn handle_poll_button(
+    ctx: &serenity::Context,
+    interaction: &serenity::ComponentInteraction,
+    db: &sqlx::PgPool,
+) -> Result<(), Error> {
+    let clicked_id = &interaction.data.custom_id;
+    let choice_index: i32 = clicked_id.strip_prefix("poll_")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    let msg_id = interaction.message.id.get() as i64;
+    let user_id = interaction.user.id.get() as i64;
+
+    let expired: Option<bool> = sqlx::query_scalar("SELECT expires_at < NOW() FROM polls WHERE message_id = $1")
+        .bind(msg_id)
+        .fetch_optional(db)
         .await?;
 
-    let children = res["data"]["children"].as_array().ok_or("no data")?;
-    if children.is_empty() {
-        ctx.send(
-            poise::CreateReply::default().embed(
-                serenity::CreateEmbed::new()
-                    .description("could not fetch memes right now")
-                    .color(0xF28080),
-            ),
+    if expired == Some(true) {
+        let poll_title = interaction
+            .message
+            .embeds
+            .first()
+            .and_then(|e| e.title.as_deref())
+            .unwrap_or("poll")
+            .to_string();
+
+        let choices: Vec<String> = interaction
+            .message
+            .embeds
+            .first()
+            .and_then(|e| e.description.as_deref())
+            .map(|desc| {
+                desc.lines()
+                    .filter_map(|line| {
+                        let line = line.trim();
+                        let after = line.split("**) ").nth(1)?;
+                        Some(after.trim().to_string())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let votes: Vec<(i32, i64)> = sqlx::query_as(
+            "SELECT choice_index, COUNT(*) as count FROM poll_votes WHERE message_id = $1 GROUP BY choice_index ORDER BY choice_index",
         )
-        .await?;
+        .bind(msg_id)
+        .fetch_all(db)
+        .await
+        .unwrap_or_default();
+
+        let vote_map: std::collections::HashMap<i32, i64> = votes.into_iter().collect();
+        let total_votes: i64 = vote_map.values().sum();
+
+        let results: String = choices
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let count = vote_map.get(&(i as i32)).copied().unwrap_or(0);
+                let bar_len = if total_votes > 0 {
+                    (count as f64 / total_votes as f64 * 10.0).round() as usize
+                } else {
+                    0
+                };
+                let bar = "█".repeat(bar_len);
+                format!("**{}**) {} — {} vote{} {}", i + 1, c, count, if count == 1 { "" } else { "s" }, bar)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let disabled_components: Vec<serenity::CreateActionRow> = choices
+            .iter()
+            .enumerate()
+            .map(|(i, choice)| {
+                serenity::CreateButton::new(format!("poll_{}", i))
+                    .label(format!("{} {}", i + 1, choice))
+                    .style(serenity::ButtonStyle::Primary)
+                    .disabled(true)
+            })
+            .collect::<Vec<_>>()
+            .chunks(5)
+            .map(|chunk| serenity::CreateActionRow::Buttons(chunk.to_vec()))
+            .collect();
+
+        interaction
+            .create_response(
+                ctx,
+                serenity::CreateInteractionResponse::UpdateMessage(
+                    serenity::CreateInteractionResponseMessage::new()
+                        .embed(
+                            serenity::CreateEmbed::new()
+                                .title(&poll_title)
+                                .description(results)
+                                .footer(serenity::CreateEmbedFooter::new(format!("poll ended • {} total vote{}", total_votes, if total_votes == 1 { "" } else { "s" })))
+                                .color(0xF28080),
+                        )
+                        .components(disabled_components),
+                ),
+            )
+            .await?;
         return Ok(());
     }
 
-    let idx = rand::random::<usize>() % children.len().min(98) + 1;
-    let data = &children[idx]["data"];
-    let title = data["title"].as_str().unwrap_or("meme");
-    let url = data["url"].as_str().unwrap_or("");
-    let permalink = data["permalink"].as_str().unwrap_or("");
-    let score = data["score"].as_i64().unwrap_or(0);
+    let choice_text = interaction
+        .message
+        .embeds
+        .first()
+        .and_then(|e| e.description.as_deref())
+        .and_then(|desc| {
+            desc.lines().nth(choice_index as usize).and_then(|line| {
+                line.trim().split("**) ").nth(1).map(|s| s.trim().to_string())
+            })
+        })
+        .unwrap_or_else(|| format!("option {}", choice_index + 1));
+
+    let existing: Option<i32> = sqlx::query_scalar("SELECT choice_index FROM poll_votes WHERE message_id = $1 AND user_id = $2")
+        .bind(msg_id)
+        .bind(user_id)
+        .fetch_optional(db)
+        .await?;
+
+    if let Some(prev) = existing {
+        if prev == choice_index {
+            interaction
+                .create_response(
+                    ctx,
+                    serenity::CreateInteractionResponse::Message(
+                        serenity::CreateInteractionResponseMessage::new()
+                            .content(format!("you already voted for **{}**!", choice_text))
+                            .ephemeral(true),
+                    ),
+                )
+                .await?;
+            return Ok(());
+        }
+    }
+
+    sqlx::query("INSERT INTO poll_votes (message_id, user_id, choice_index) VALUES ($1, $2, $3) ON CONFLICT (message_id, user_id) DO UPDATE SET choice_index = $3")
+        .bind(msg_id)
+        .bind(user_id)
+        .bind(choice_index)
+        .execute(db)
+        .await?;
+
+    interaction
+        .create_response(
+            ctx,
+            serenity::CreateInteractionResponse::Message(
+                serenity::CreateInteractionResponseMessage::new()
+                    .content(format!("✅ you voted for **{}**!", choice_text))
+                    .ephemeral(true),
+            ),
+        )
+        .await?;
+
+    Ok(())
+}
+
+async fn fetch_meme(subreddit: &str) -> Result<serde_json::Value, reqwest::Error> {
+    let client = reqwest::Client::new();
+    client
+        .get(format!("https://meme-api.com/gimme/{}", subreddit))
+        .send()
+        .await?
+        .json::<serde_json::Value>()
+        .await
+}
+
+/// fetches a random meme from r/memes
+#[poise::command(slash_command)]
+pub async fn meme(ctx: Context<'_>) -> Result<(), Error> {
+    let res = match fetch_meme("memes").await {
+        Ok(r) => r,
+        Err(_) => {
+            ctx.send(
+                poise::CreateReply::default().embed(
+                    serenity::CreateEmbed::new()
+                        .description("could not fetch memes right now")
+                        .color(0xF28080),
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    let title = res["title"].as_str().unwrap_or("meme");
+    let url = res["url"].as_str().unwrap_or("");
+    let post_link = res["postLink"].as_str().unwrap_or("");
+    let score = res["ups"].as_i64().unwrap_or(0);
 
     ctx.send(
         poise::CreateReply::default().embed(
             serenity::CreateEmbed::new()
                 .title(title)
-                .url(format!("https://reddit.com{}", permalink))
+                .url(post_link)
                 .image(url)
                 .footer(serenity::CreateEmbedFooter::new(format!("⬆️ {}", score)))
                 .color(0xF28080),
@@ -506,40 +808,31 @@ pub async fn meme(ctx: Context<'_>) -> Result<(), Error> {
 /// fetches a random dank meme from r/dankmemes
 #[poise::command(slash_command)]
 pub async fn dankmeme(ctx: Context<'_>) -> Result<(), Error> {
-    let client = reqwest::Client::new();
-    let res = client
-        .get("https://reddit.com/r/dankmemes/.json?limit=100")
-        .header("User-Agent", "taizo-bot/1.0")
-        .send()
-        .await?
-        .json::<serde_json::Value>()
-        .await?;
+    let res = match fetch_meme("dankmemes").await {
+        Ok(r) => r,
+        Err(_) => {
+            ctx.send(
+                poise::CreateReply::default().embed(
+                    serenity::CreateEmbed::new()
+                        .description("could not fetch memes right now")
+                        .color(0xF28080),
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
 
-    let children = res["data"]["children"].as_array().ok_or("no data")?;
-    if children.is_empty() {
-        ctx.send(
-            poise::CreateReply::default().embed(
-                serenity::CreateEmbed::new()
-                    .description("could not fetch memes right now")
-                    .color(0xF28080),
-            ),
-        )
-        .await?;
-        return Ok(());
-    }
-
-    let idx = rand::random::<usize>() % children.len().min(98) + 1;
-    let data = &children[idx]["data"];
-    let title = data["title"].as_str().unwrap_or("dank meme");
-    let url = data["url"].as_str().unwrap_or("");
-    let permalink = data["permalink"].as_str().unwrap_or("");
-    let score = data["score"].as_i64().unwrap_or(0);
+    let title = res["title"].as_str().unwrap_or("dank meme");
+    let url = res["url"].as_str().unwrap_or("");
+    let post_link = res["postLink"].as_str().unwrap_or("");
+    let score = res["ups"].as_i64().unwrap_or(0);
 
     ctx.send(
         poise::CreateReply::default().embed(
             serenity::CreateEmbed::new()
                 .title(title)
-                .url(format!("https://reddit.com{}", permalink))
+                .url(post_link)
                 .image(url)
                 .footer(serenity::CreateEmbedFooter::new(format!("⬆️ {}", score)))
                 .color(0xF28080),
@@ -552,40 +845,31 @@ pub async fn dankmeme(ctx: Context<'_>) -> Result<(), Error> {
 /// fetches a random post from r/ProgrammerHumor
 #[poise::command(slash_command, aliases("ph"))]
 pub async fn programmerhumor(ctx: Context<'_>) -> Result<(), Error> {
-    let client = reqwest::Client::new();
-    let res = client
-        .get("https://reddit.com/r/ProgrammerHumor/.json?limit=100")
-        .header("User-Agent", "taizo-bot/1.0")
-        .send()
-        .await?
-        .json::<serde_json::Value>()
-        .await?;
+    let res = match fetch_meme("ProgrammerHumor").await {
+        Ok(r) => r,
+        Err(_) => {
+            ctx.send(
+                poise::CreateReply::default().embed(
+                    serenity::CreateEmbed::new()
+                        .description("could not fetch posts right now")
+                        .color(0xF28080),
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
 
-    let children = res["data"]["children"].as_array().ok_or("no data")?;
-    if children.is_empty() {
-        ctx.send(
-            poise::CreateReply::default().embed(
-                serenity::CreateEmbed::new()
-                    .description("could not fetch posts right now")
-                    .color(0xF28080),
-            ),
-        )
-        .await?;
-        return Ok(());
-    }
-
-    let idx = rand::random::<usize>() % children.len().min(98) + 1;
-    let data = &children[idx]["data"];
-    let title = data["title"].as_str().unwrap_or("post");
-    let url = data["url"].as_str().unwrap_or("");
-    let permalink = data["permalink"].as_str().unwrap_or("");
-    let score = data["score"].as_i64().unwrap_or(0);
+    let title = res["title"].as_str().unwrap_or("post");
+    let url = res["url"].as_str().unwrap_or("");
+    let post_link = res["postLink"].as_str().unwrap_or("");
+    let score = res["ups"].as_i64().unwrap_or(0);
 
     ctx.send(
         poise::CreateReply::default().embed(
             serenity::CreateEmbed::new()
                 .title(title)
-                .url(format!("https://reddit.com{}", permalink))
+                .url(post_link)
                 .image(url)
                 .footer(serenity::CreateEmbedFooter::new(format!("⬆️ {}", score)))
                 .color(0xF28080),
@@ -643,18 +927,9 @@ pub async fn reddit(
         return Ok(());
     }
 
-    let client = reqwest::Client::new();
-    let res = client
-        .get(format!("https://reddit.com/r/{}/.json?limit=100", subreddit))
-        .header("User-Agent", "taizo-bot/1.0")
-        .send()
-        .await?
-        .json::<serde_json::Value>()
-        .await?;
-
-    let children = match res["data"]["children"].as_array() {
-        Some(c) => c,
-        None => {
+    let res = match fetch_meme(&subreddit).await {
+        Ok(r) => r,
+        Err(_) => {
             ctx.send(
                 poise::CreateReply::default().embed(
                     serenity::CreateEmbed::new()
@@ -667,22 +942,7 @@ pub async fn reddit(
         }
     };
 
-    if children.is_empty() {
-        ctx.send(
-            poise::CreateReply::default().embed(
-                serenity::CreateEmbed::new()
-                    .description("no posts found in that subreddit!")
-                    .color(0xF28080),
-            ),
-        )
-        .await?;
-        return Ok(());
-    }
-
-    let idx = rand::random::<usize>() % children.len().min(98) + 1;
-    let data = &children[idx]["data"];
-
-    if data["over_18"].as_bool().unwrap_or(false) {
+    if res["nsfw"].as_bool().unwrap_or(false) {
         let is_nsfw = ctx.channel_id().to_channel(&ctx).await.map(|c| {
             if let serenity::Channel::Guild(gc) = c {
                 gc.nsfw
@@ -704,17 +964,17 @@ pub async fn reddit(
         }
     }
 
-    let title = data["title"].as_str().unwrap_or("post");
-    let url = data["url"].as_str().unwrap_or("");
-    let permalink = data["permalink"].as_str().unwrap_or("");
-    let score = data["score"].as_i64().unwrap_or(0);
+    let title = res["title"].as_str().unwrap_or("post");
+    let url = res["url"].as_str().unwrap_or("");
+    let post_link = res["postLink"].as_str().unwrap_or("");
+    let score = res["ups"].as_i64().unwrap_or(0);
 
     ctx.send(
         poise::CreateReply::default().embed(
             serenity::CreateEmbed::new()
                 .title(format!("r/{}", subreddit))
-                .url(format!("https://reddit.com/r/{}", subreddit))
-                .description(format!("[{}](https://reddit.com{})", title, permalink))
+                .url(post_link)
+                .description(title)
                 .image(url)
                 .footer(serenity::CreateEmbedFooter::new(format!("⬆️ {}", score)))
                 .color(0xF28080),

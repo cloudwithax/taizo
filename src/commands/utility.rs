@@ -148,16 +148,17 @@ fn build_embed(cog: &CogCommands, page: usize) -> serenity::CreateEmbed {
     let end = std::cmp::min(start + PER_PAGE, cog.commands.len());
     let slice = &cog.commands[start..end];
 
+    let total_pages = (cog.commands.len() + PER_PAGE - 1) / PER_PAGE;
+    let total_commands: usize = all_cogs().iter().map(|c| c.commands.len()).sum();
+
     let description: Vec<String> = slice
         .iter()
-        .map(|(cmd, desc)| format!("`{}` — {}", cmd, desc))
+        .map(|(cmd, desc)| format!("**{}**\n{}", cmd, desc))
         .collect();
 
-    let total_pages = (cog.commands.len() + PER_PAGE - 1) / PER_PAGE;
-
     serenity::CreateEmbed::new()
-        .title(format!("{} — page {}/{}", cog.name, page + 1, total_pages))
-        .description(description.join("\n"))
+        .title(format!("page {}/{} ({} commands)", page + 1, total_pages, total_commands))
+        .description(format!("**{} Commands**\n\n{}\n\n*use \";help command\" for more info on a command.*", cog.name, description.join("\n")))
         .color(0xF28080)
 }
 

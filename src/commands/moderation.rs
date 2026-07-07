@@ -1,6 +1,7 @@
 use crate::{Context, Error};
 use poise::serenity_prelude as serenity;
 use poise::serenity_prelude::Mentionable;
+use rand::seq::SliceRandom;
 
 /// ban a member from the server
 #[poise::command(slash_command, required_permissions = "BAN_MEMBERS")]
@@ -385,4 +386,270 @@ pub async fn setleave(
     )
     .await?;
     Ok(())
+}
+
+fn random_honeypot_name(existing: &[String]) -> String {
+    let names = [
+        "general", "chat", "lounge", "hangout", "off-topic",
+        "watercooler", "random", "talk", "social", "chill",
+        "discussion", "main", "lobby", "commons", "recreation",
+        "hangout-2", "chat-2", "lounge-2", "vibes", "corner",
+        "hangout-3", "hang", "yapping", "the-spot", "place",
+        "room", "area", "zone", "hub", "space",
+    ];
+    let available: Vec<&str> = names.iter().copied().filter(|n| !existing.iter().any(|e| e == n)).collect();
+    if let Some(&name) = available.choose(&mut rand::thread_rng()) {
+        name.to_string()
+    } else {
+        format!("room-{}", rand::random::<u16>())
+    }
+}
+
+/// manage honeypot channels (auto-bans anyone who chats in them)
+#[poise::command(slash_command, required_permissions = "MANAGE_GUILD", subcommands("create", "remove", "toggle"))]
+pub async fn honeypot(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.say("use a subcommand: `create`, `remove`, or `toggle`").await?;
+    Ok(())
+}
+
+/// create a honeypot channel that bans anyone who chats in it
+#[poise::command(slash_command)]
+pub async fn create(ctx: Context<'_>) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().ok_or("must be used in a guild")?;
+    let db = &ctx.data().db;
+    let gid = guild_id.get() as i64;
+
+    let existing = sqlx::query_scalar::<_, i64>("SELECT channel_id FROM honeypots WHERE guild_id = $1")
+        .bind(gid)
+        .fetch_optional(db)
+        .await?;
+
+    if existing.is_some() {
+        ctx.send(
+            poise::CreateReply::default().embed(
+                serenity::CreateEmbed::new()
+                    .description("this server already has a honeypot channel! use `/honeypot remove` first.")
+                    .color(0xF28080),
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let channels = guild_id.channels(&ctx).await.unwrap_or_default();
+    let existing_names: Vec<String> = channels.values().map(|c| c.name.clone()).collect();
+    let name = random_honeypot_name(&existing_names);
+    let channel = guild_id
+        .create_channel(
+            &ctx,
+            serenity::CreateChannel::new(name).kind(serenity::ChannelType::Text),
+        )
+        .await?;
+
+    let _ = channel.id.send_message(&ctx, serenity::CreateMessage::new()
+        .embed(
+            serenity::CreateEmbed::new()
+                .description("this channel is monitored. if you are a regular user, **do not type here** or you will be banned automatically.")
+                .color(0xF28080),
+        )).await;
+
+    sqlx::query("INSERT INTO honeypots (guild_id, channel_id) VALUES ($1, $2)")
+        .bind(gid)
+        .bind(channel.id.get() as i64)
+        .execute(db)
+        .await?;
+
+    ctx.send(
+        poise::CreateReply::default().embed(
+            serenity::CreateEmbed::new()
+                .description(format!(
+                    "🪤 honeypot created: {} — anyone who chats here will be banned instantly.",
+                    channel.mention()
+                ))
+                .color(0x80F291),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+/// remove the honeypot channel
+#[poise::command(slash_command)]
+pub async fn remove(ctx: Context<'_>) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().ok_or("must be used in a guild")?;
+    let db = &ctx.data().db;
+    let gid = guild_id.get() as i64;
+
+    let channel_id = sqlx::query_scalar::<_, i64>("SELECT channel_id FROM honeypots WHERE guild_id = $1")
+        .bind(gid)
+        .fetch_optional(db)
+        .await?;
+
+    let channel_id = match channel_id {
+        Some(id) => id,
+        None => {
+            ctx.send(
+                poise::CreateReply::default().embed(
+                    serenity::CreateEmbed::new()
+                        .description("no honeypot channel exists in this server.")
+                        .color(0xF28080),
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    sqlx::query("DELETE FROM honeypots WHERE guild_id = $1")
+        .bind(gid)
+        .execute(db)
+        .await?;
+
+    let _ = serenity::ChannelId::new(channel_id as u64).delete(&ctx).await;
+
+    ctx.send(
+        poise::CreateReply::default().embed(
+            serenity::CreateEmbed::new()
+                .description("✅ honeypot channel removed.")
+                .color(0x80F291),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+/// toggle daily rotation (renames the honeypot to a random name each day)
+#[poise::command(slash_command)]
+pub async fn toggle(ctx: Context<'_>) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().ok_or("must be used in a guild")?;
+    let db = &ctx.data().db;
+    let gid = guild_id.get() as i64;
+
+    let row = sqlx::query_as::<_, (i64, bool)>("SELECT channel_id, rotate_daily FROM honeypots WHERE guild_id = $1")
+        .bind(gid)
+        .fetch_optional(db)
+        .await?;
+
+    let (channel_id, current) = match row {
+        Some(r) => r,
+        None => {
+            ctx.send(
+                poise::CreateReply::default().embed(
+                    serenity::CreateEmbed::new()
+                        .description("no honeypot channel exists in this server.")
+                        .color(0xF28080),
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    let new_val = !current;
+    sqlx::query("UPDATE honeypots SET rotate_daily = $1 WHERE guild_id = $2")
+        .bind(new_val)
+        .bind(gid)
+        .execute(db)
+        .await?;
+
+    let status = if new_val { "enabled" } else { "disabled" };
+    ctx.send(
+        poise::CreateReply::default().embed(
+            serenity::CreateEmbed::new()
+                .description(format!(
+                    "✅ daily rotation {} for <#{}>.",
+                    status, channel_id
+                ))
+                .color(0x80F291),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+/// check if a channel is a honeypot and ban the author if so
+pub async fn handle_honeypot_message(
+    http: &serenity::Http,
+    db: &sqlx::PgPool,
+    msg: &serenity::Message,
+) {
+    if msg.author.bot {
+        return;
+    }
+
+    let channel_id = msg.channel_id.get() as i64;
+
+    let row = sqlx::query_as::<_, (i64, bool)>("SELECT guild_id, rotate_daily FROM honeypots WHERE channel_id = $1")
+        .bind(channel_id)
+        .fetch_optional(db)
+        .await;
+
+    let (guild_id, _) = match row {
+        Ok(Some(r)) => r,
+        _ => return,
+    };
+
+    let guild = match serenity::GuildId::new(guild_id as u64).to_partial_guild(http).await {
+        Ok(g) => g,
+        Err(_) => return,
+    };
+
+    let reason = "sent a message in a honeypot channel";
+
+    if let Err(e) = guild
+        .ban_with_reason(http, msg.author.id, 0, reason)
+        .await
+    {
+        tracing::error!("failed to ban honeypot user {}: {}", msg.author.id, e);
+    }
+
+    let _ = msg.delete(http).await;
+}
+
+/// rotate all honeypot channels that have daily rotation enabled
+pub async fn rotate_honeypots(http: &serenity::Http, db: &sqlx::PgPool) {
+    let rows = sqlx::query_as::<_, (i64, i64, Option<chrono::NaiveDate>)>(
+        "SELECT guild_id, channel_id, last_rotated FROM honeypots WHERE rotate_daily = true",
+    )
+    .fetch_all(db)
+    .await;
+
+    let rows = match rows {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+
+    let today = chrono::Utc::now().date_naive();
+
+    for (guild_id, channel_id, last_rotated) in rows {
+        if last_rotated == Some(today) {
+            continue;
+        }
+
+        let guild = serenity::GuildId::new(guild_id as u64);
+        let existing_names: Vec<String> = match guild.channels(http).await {
+            Ok(channels) => channels.values().map(|c| c.name.clone()).collect(),
+            Err(_) => vec![],
+        };
+        let new_name = random_honeypot_name(&existing_names);
+        let channel = serenity::ChannelId::new(channel_id as u64);
+
+        if channel
+            .edit(http, serenity::EditChannel::new().name(new_name))
+            .await
+            .is_ok()
+        {
+            let _ = channel.send_message(http, serenity::CreateMessage::new()
+                .embed(
+                    serenity::CreateEmbed::new()
+                        .description("this channel has been renamed. if you are a regular user, **do not type here** or you will be banned automatically.")
+                        .color(0xF28080),
+                )).await;
+            let _ = sqlx::query("UPDATE honeypots SET last_rotated = $1 WHERE guild_id = $2")
+                .bind(today)
+                .bind(guild_id)
+                .execute(db)
+                .await;
+        }
+    }
 }

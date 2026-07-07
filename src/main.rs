@@ -9,6 +9,12 @@ pub struct Data {
     pub db: sqlx::PgPool,
 }
 
+struct DbKey;
+
+impl serenity::prelude::TypeMapKey for DbKey {
+    type Value = sqlx::PgPool;
+}
+
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
 
@@ -60,6 +66,7 @@ async fn main() {
                 commands::moderation::warnings(),
                 commands::moderation::setwelcome(),
                 commands::moderation::setleave(),
+                commands::moderation::honeypot(),
                 commands::fun::say(),
                 commands::fun::choose(),
                 commands::fun::hug(),
@@ -102,7 +109,10 @@ async fn main() {
                 commands::economy::pay(),
                 commands::economy::coinflip(),
                 commands::economy::highlow(),
+                commands::economy::blackjack(),
                 commands::economy::leaderboard(),
+                commands::reactionrole::reactionrole(),
+                commands::ticket::ticket(),
             ],
             on_error: |error| {
                 Box::pin(async move {
@@ -118,6 +128,9 @@ async fn main() {
                 Box::pin(async move {
                     match event {
                         serenity::FullEvent::Message { new_message } => {
+                            if let Some(db) = ctx.data.read().await.get::<DbKey>().cloned() {
+                                commands::moderation::handle_honeypot_message(&ctx.http, &db, new_message).await;
+                            }
                             commands::fun::on_message(new_message).await;
                         }
                         serenity::FullEvent::MessageDelete {
@@ -133,10 +146,58 @@ async fn main() {
                             )
                             .await;
                         }
+                        serenity::FullEvent::ReactionAdd { add_reaction } => {
+                            if let Some(db) = ctx.data.read().await.get::<DbKey>().cloned() {
+                                commands::reactionrole::handle_reaction_add(ctx, add_reaction, &db).await;
+                            }
+                        }
+                        serenity::FullEvent::ReactionRemove { removed_reaction } => {
+                            if let Some(db) = ctx.data.read().await.get::<DbKey>().cloned() {
+                                commands::reactionrole::handle_reaction_remove(ctx, removed_reaction, &db).await;
+                            }
+                        }
                         serenity::FullEvent::InteractionCreate { interaction } => {
                             if let serenity::Interaction::Component(component) = interaction {
                                 if component.data.custom_id.starts_with("help_") {
                                     let _ = commands::utility::handle_help_button(ctx, component).await;
+                                }
+                                if component.data.custom_id.starts_with("poll_") {
+                                    let db = ctx.data.read().await.get::<DbKey>().cloned();
+                                    if let Some(db) = db {
+                                        let _ = commands::fun::handle_poll_button(ctx, component, &db).await;
+                                    }
+                                }
+                                if component.data.custom_id.starts_with("rr_") {
+                                    let db = ctx.data.read().await.get::<DbKey>().cloned();
+                                    if let Some(db) = db {
+                                        let _ = commands::reactionrole::handle_setup_button(ctx, component, &db).await;
+                                    }
+                                }
+                                if component.data.custom_id == "ticket_open" {
+                                    let db = ctx.data.read().await.get::<DbKey>().cloned();
+                                    if let Some(db) = db {
+                                        let _ = commands::ticket::handle_ticket_open(ctx, component, &db).await;
+                                    }
+                                }
+                                if component.data.custom_id == "ticket_close" {
+                                    let db = ctx.data.read().await.get::<DbKey>().cloned();
+                                    if let Some(db) = db {
+                                        let _ = commands::ticket::handle_ticket_close(ctx, component, &db).await;
+                                    }
+                                }
+                            }
+                            if let Some(modal) = interaction.clone().modal_submit() {
+                                if modal.data.custom_id.starts_with("rr_modal_") {
+                                    let db = ctx.data.read().await.get::<DbKey>().cloned();
+                                    if let Some(db) = db {
+                                        let _ = commands::reactionrole::handle_modal_submit(ctx, &modal, &db).await;
+                                    }
+                                }
+                                if modal.data.custom_id == "ticket_modal" {
+                                    let db = ctx.data.read().await.get::<DbKey>().cloned();
+                                    if let Some(db) = db {
+                                        let _ = commands::ticket::handle_ticket_modal(ctx, &modal, &db).await;
+                                    }
                                 }
                             }
                         }
@@ -159,6 +220,8 @@ async fn main() {
                     .await?;
                     info!("Registered slash commands for guild {}", guild_id);
                 }
+                ctx.data.write().await.insert::<DbKey>(db.clone());
+                commands::moderation::rotate_honeypots(&ctx.http, &db).await;
                 Ok(Data {
                     _start_time: std::time::Instant::now(),
                     db,

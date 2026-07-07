@@ -877,31 +877,35 @@ pub async fn highlow(
         (rng.gen_range(1..=25), rng.gen_range(1..=25))
     };
 
+    let buttons = vec![
+        serenity::CreateButton::new("highlow_up")
+            .label("⬆ higher")
+            .style(serenity::ButtonStyle::Success),
+        serenity::CreateButton::new("highlow_down")
+            .label("⬇ lower")
+            .style(serenity::ButtonStyle::Danger),
+    ];
+
     let msg = ctx.send(
-        poise::CreateReply::default().embed(
-            serenity::CreateEmbed::new()
-                .title("hi-lo")
-                .description(format!(
-                    "**test your luck, {}!**\nis the missing number higher or lower?\n```1) {}\n2) ??```",
-                    ctx.author().mention(), hi
-                ))
-                .color(0xF28080),
-        ),
+        poise::CreateReply::default()
+            .embed(
+                serenity::CreateEmbed::new()
+                    .title("hi-lo")
+                    .description(format!(
+                        "**test your luck, {}!**\nis the missing number higher or lower?\n```1) {}\n2) ??```",
+                        ctx.author().mention(), hi
+                    ))
+                    .color(0xF28080),
+            )
+            .components(vec![serenity::CreateActionRow::Buttons(buttons)]),
     )
     .await?;
 
     let reply_msg = msg.into_message().await?;
 
-    reply_msg
-        .react(&ctx, serenity::ReactionType::Unicode("⬆️".to_string()))
-        .await?;
-    reply_msg
-        .react(&ctx, serenity::ReactionType::Unicode("⬇️".to_string()))
-        .await?;
-
     use poise::futures_util::StreamExt;
 
-    let reaction = serenity::collector::ReactionCollector::new(&ctx.serenity_context().shard)
+    let interaction = serenity::collector::ComponentInteractionCollector::new(&ctx.serenity_context().shard)
         .message_id(reply_msg.id)
         .author_id(ctx.author().id)
         .timeout(std::time::Duration::from_secs(30))
@@ -909,32 +913,44 @@ pub async fn highlow(
         .next()
         .await;
 
-    match reaction {
-        Some(reaction) => {
-            let emoji = &reaction.emoji;
-            let guessed_up = matches!(emoji, serenity::ReactionType::Unicode(e) if e == "⬆️");
+    match interaction {
+        Some(interaction) => {
+            let guessed_up = interaction.data.custom_id == "highlow_up";
 
-            if (guessed_up && hi >= low) || (!guessed_up && hi <= low) {
+            let won = (guessed_up && hi >= low) || (!guessed_up && hi <= low);
+
+            if won {
                 add_money(&ctx.data().db, user_id, amount).await?;
-                ctx.send(
-                    poise::CreateReply::default().embed(
-                        serenity::CreateEmbed::new()
-                            .description(format!("✅ {} guessed correctly and won **${}**!", ctx.author().mention(), amount))
-                            .color(0x80F291),
-                    ),
-                )
-                .await?;
             } else {
                 remove_money(&ctx.data().db, user_id, amount).await?;
-                ctx.send(
-                    poise::CreateReply::default().embed(
-                        serenity::CreateEmbed::new()
-                            .description(format!("❌ {} guessed incorrectly and lost **${}**", ctx.author().mention(), amount))
-                            .color(0xF28080),
+            }
+
+            let (description, color) = if won {
+                (
+                    format!("✅ {} guessed correctly and won **${}**!", ctx.author().mention(), amount),
+                    0x80F291,
+                )
+            } else {
+                (
+                    format!("❌ {} guessed incorrectly and lost **${}**", ctx.author().mention(), amount),
+                    0xF28080,
+                )
+            };
+
+            interaction
+                .create_response(
+                    &ctx,
+                    serenity::CreateInteractionResponse::UpdateMessage(
+                        serenity::CreateInteractionResponseMessage::new()
+                            .embed(
+                                serenity::CreateEmbed::new()
+                                    .description(description)
+                                    .color(color),
+                            )
+                            .components(vec![]),
                     ),
                 )
                 .await?;
-            }
         }
         None => {
             ctx.send(
@@ -949,6 +965,346 @@ pub async fn highlow(
     }
 
     Ok(())
+}
+
+/// play a hand of blackjack
+#[poise::command(slash_command, aliases("bj"))]
+pub async fn blackjack(
+    ctx: Context<'_>,
+    #[description = "amount to bet"] mut bet: i64,
+) -> Result<(), Error> {
+    let user_id = ctx.author().id.get();
+    let db = &ctx.data().db;
+
+    if !ensure_account(db, user_id).await? {
+        ctx.send(
+            poise::CreateReply::default().embed(
+                serenity::CreateEmbed::new()
+                    .description("you need to open an account first!")
+                    .color(0xF28080),
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    if bet < 50 || bet > 10_000 {
+        ctx.send(
+            poise::CreateReply::default().embed(
+                serenity::CreateEmbed::new()
+                    .description("bet must be between $50 and $10,000.")
+                    .color(0xF28080),
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let (wallet, _, _) = get_balance(db, user_id).await?;
+    if wallet < bet {
+        ctx.send(
+            poise::CreateReply::default().embed(
+                serenity::CreateEmbed::new()
+                    .description(format!("you only have ${} in your wallet.", wallet))
+                    .color(0xF28080),
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    fn random_card() -> (String, u8) {
+        let mut rng = rand::thread_rng();
+        let rank: u8 = rng.gen_range(0..13);
+        let suit: u8 = rng.gen_range(0..4);
+        let suit_str = match suit {
+            0 => "♠",
+            1 => "♥",
+            2 => "♦",
+            _ => "♣",
+        };
+        match rank {
+            0 => (format!("A{}", suit_str), 11),
+            1 => (format!("2{}", suit_str), 2),
+            2 => (format!("3{}", suit_str), 3),
+            3 => (format!("4{}", suit_str), 4),
+            4 => (format!("5{}", suit_str), 5),
+            5 => (format!("6{}", suit_str), 6),
+            6 => (format!("7{}", suit_str), 7),
+            7 => (format!("8{}", suit_str), 8),
+            8 => (format!("9{}", suit_str), 9),
+            9 => (format!("10{}", suit_str), 10),
+            10 => (format!("J{}", suit_str), 10),
+            11 => (format!("Q{}", suit_str), 10),
+            _ => (format!("K{}", suit_str), 10),
+        }
+    }
+
+    fn hand_value(hand: &[(String, u8)]) -> u8 {
+        let mut total: u8 = hand.iter().map(|(_, v)| v).sum();
+        let aces = hand.iter().filter(|(r, _)| r.starts_with('A')).count();
+        for _ in 0..aces {
+            if total > 21 {
+                total -= 10;
+            }
+        }
+        total
+    }
+
+    fn hand_display(hand: &[(String, u8)]) -> String {
+        hand.iter().map(|(c, _)| c.as_str()).collect::<Vec<_>>().join(" ")
+    }
+
+    let player_card1 = random_card();
+    let player_card2 = random_card();
+    let dealer_card1 = random_card();
+    let dealer_card2 = random_card();
+
+    let mut player_hand = vec![player_card1, player_card2];
+    let mut dealer_hand = vec![dealer_card1, dealer_card2];
+
+    let player_total = hand_value(&player_hand);
+
+    fn game_embed(
+        player_hand: &[(String, u8)],
+        dealer_hand: &[(String, u8)],
+        hide_dealer: bool,
+        title: &str,
+        color: u32,
+    ) -> serenity::CreateEmbed {
+        let dealer_str = if hide_dealer {
+            format!("{} ??", dealer_hand[0].0)
+        } else {
+            hand_display(dealer_hand)
+        };
+        let player_str = hand_display(player_hand);
+        let dealer_val = if hide_dealer {
+            format!("{}", dealer_hand[0].1)
+        } else {
+            format!("{}", hand_value(dealer_hand))
+        };
+        serenity::CreateEmbed::new()
+            .title(title)
+            .field("dealer", format!("{}\n({})", dealer_str, dealer_val), false)
+            .field("player", format!("{}\n({})", player_str, hand_value(player_hand)), false)
+            .color(color)
+    }
+
+    let initial_embed = game_embed(&player_hand, &dealer_hand, true, "blackjack", 0xF2D380);
+
+    if player_total == 21 {
+        if hand_value(&dealer_hand) == 21 {
+            let result_embed = game_embed(&player_hand, &dealer_hand, false, "push — both have blackjack", 0xF2D380);
+            ctx.send(poise::CreateReply::default().embed(result_embed)).await?;
+            return Ok(());
+        }
+        remove_money(db, user_id, bet).await?;
+        let payout = (bet as f64 * 1.5) as i64;
+        add_money(db, user_id, bet + payout).await?;
+        let result_embed = game_embed(&player_hand, &dealer_hand, false, "blackjack! you win!", 0x80F291)
+            .field("payout", format!("+${}", payout), false);
+        ctx.send(poise::CreateReply::default().embed(result_embed)).await?;
+        return Ok(());
+    }
+
+    if hand_value(&dealer_hand) == 21 {
+        remove_money(db, user_id, bet).await?;
+        let result_embed = game_embed(&player_hand, &dealer_hand, false, "dealer has blackjack. you lose.", 0xF28080)
+            .field("loss", format!("-${}", bet), false);
+        ctx.send(poise::CreateReply::default().embed(result_embed)).await?;
+        return Ok(());
+    }
+
+    let buttons = vec![
+        serenity::CreateButton::new("bj_hit")
+            .label("hit")
+            .style(serenity::ButtonStyle::Success),
+        serenity::CreateButton::new("bj_stand")
+            .label("stand")
+            .style(serenity::ButtonStyle::Danger),
+        serenity::CreateButton::new("bj_double")
+            .label("double down")
+            .style(serenity::ButtonStyle::Primary)
+            .disabled(wallet < bet * 2),
+    ];
+
+    let msg = ctx.send(
+        poise::CreateReply::default()
+            .embed(initial_embed)
+            .components(vec![serenity::CreateActionRow::Buttons(buttons)]),
+    )
+    .await?;
+
+    let reply_msg = msg.into_message().await?;
+
+    loop {
+        use poise::futures_util::StreamExt;
+
+        let interaction = serenity::collector::ComponentInteractionCollector::new(
+            &ctx.serenity_context().shard,
+        )
+        .message_id(reply_msg.id)
+        .author_id(ctx.author().id)
+        .timeout(std::time::Duration::from_secs(30))
+        .stream()
+        .next()
+        .await;
+
+        match interaction {
+            Some(interaction) => {
+                let action = interaction.data.custom_id.clone();
+
+                if action == "bj_hit" {
+                    let new_card = random_card();
+                    player_hand.push(new_card);
+                    let pt = hand_value(&player_hand);
+
+                    if pt > 21 {
+                        remove_money(db, user_id, bet).await?;
+                        let result_embed = game_embed(&player_hand, &dealer_hand, false, "bust! you lose.", 0xF28080)
+                            .field("loss", format!("-${}", bet), false);
+                        interaction.create_response(
+                            &ctx,
+                            serenity::CreateInteractionResponse::UpdateMessage(
+                                serenity::CreateInteractionResponseMessage::new()
+                                    .embed(result_embed)
+                                    .components(vec![]),
+                            ),
+                        ).await?;
+                        return Ok(());
+                    }
+
+                    let updated_embed = game_embed(&player_hand, &dealer_hand, true, "blackjack", 0xF2D380);
+                    interaction.create_response(
+                        &ctx,
+                        serenity::CreateInteractionResponse::UpdateMessage(
+                            serenity::CreateInteractionResponseMessage::new()
+                                .embed(updated_embed)
+                                .components(vec![
+                                    serenity::CreateActionRow::Buttons(vec![
+                                        serenity::CreateButton::new("bj_hit")
+                                            .label("hit")
+                                            .style(serenity::ButtonStyle::Success),
+                                        serenity::CreateButton::new("bj_stand")
+                                            .label("stand")
+                                            .style(serenity::ButtonStyle::Danger),
+                                    ]),
+                                ]),
+                        ),
+                    ).await?;
+                } else if action == "bj_stand" {
+                    while hand_value(&dealer_hand) < 17 {
+                        dealer_hand.push(random_card());
+                    }
+                    let dt = hand_value(&dealer_hand);
+                    let pt = hand_value(&player_hand);
+
+                    let (title, color, payout) = if dt > 21 {
+                        ("dealer busts! you win!", 0x80F291, bet)
+                    } else if pt > dt {
+                        ("you win!", 0x80F291, bet)
+                    } else if pt < dt {
+                        ("dealer wins.", 0xF28080, -bet)
+                    } else {
+                        ("push.", 0xF2D380, 0)
+                    };
+
+                    if payout > 0 {
+                        add_money(db, user_id, payout).await?;
+                    } else if payout < 0 {
+                        remove_money(db, user_id, -payout).await?;
+                    }
+
+                    let result_embed = game_embed(&player_hand, &dealer_hand, false, title, color)
+                        .field(if payout >= 0 { "winnings" } else { "loss" }, format!("{}${}", if payout >= 0 { "+" } else { "" }, payout.abs()), false);
+                    interaction.create_response(
+                        &ctx,
+                        serenity::CreateInteractionResponse::UpdateMessage(
+                            serenity::CreateInteractionResponseMessage::new()
+                                .embed(result_embed)
+                                .components(vec![]),
+                        ),
+                    ).await?;
+                    return Ok(());
+                } else if action == "bj_double" {
+                    if wallet < bet * 2 {
+                        interaction.create_response(
+                            &ctx,
+                            serenity::CreateInteractionResponse::Message(
+                                serenity::CreateInteractionResponseMessage::new()
+                                    .content("you can't afford to double down!")
+                                    .ephemeral(true),
+                            ),
+                        ).await?;
+                        continue;
+                    }
+                    bet *= 2;
+                    let new_card = random_card();
+                    player_hand.push(new_card);
+                    let pt = hand_value(&player_hand);
+
+                    if pt > 21 {
+                        remove_money(db, user_id, bet).await?;
+                        let result_embed = game_embed(&player_hand, &dealer_hand, false, "bust! you lose.", 0xF28080)
+                            .field("loss", format!("-${}", bet), false);
+                        interaction.create_response(
+                            &ctx,
+                            serenity::CreateInteractionResponse::UpdateMessage(
+                                serenity::CreateInteractionResponseMessage::new()
+                                    .embed(result_embed)
+                                    .components(vec![]),
+                            ),
+                        ).await?;
+                        return Ok(());
+                    }
+
+                    while hand_value(&dealer_hand) < 17 {
+                        dealer_hand.push(random_card());
+                    }
+                    let dt = hand_value(&dealer_hand);
+
+                    let (title, color, payout) = if dt > 21 {
+                        ("dealer busts! you win!", 0x80F291, bet)
+                    } else if pt > dt {
+                        ("you win!", 0x80F291, bet)
+                    } else if pt < dt {
+                        ("dealer wins.", 0xF28080, -bet)
+                    } else {
+                        ("push.", 0xF2D380, 0)
+                    };
+
+                    if payout > 0 {
+                        add_money(db, user_id, payout).await?;
+                    } else if payout < 0 {
+                        remove_money(db, user_id, -payout).await?;
+                    }
+
+                    let result_embed = game_embed(&player_hand, &dealer_hand, false, title, color)
+                        .field(if payout >= 0 { "winnings" } else { "loss" }, format!("{}${}", if payout >= 0 { "+" } else { "" }, payout.abs()), false);
+                    interaction.create_response(
+                        &ctx,
+                        serenity::CreateInteractionResponse::UpdateMessage(
+                            serenity::CreateInteractionResponseMessage::new()
+                                .embed(result_embed)
+                                .components(vec![]),
+                        ),
+                    ).await?;
+                    return Ok(());
+                }
+            }
+            None => {
+                ctx.send(
+                    poise::CreateReply::default().embed(
+                        serenity::CreateEmbed::new()
+                            .description("blackjack timed out.")
+                            .color(0xF28080),
+                    ),
+                )
+                .await?;
+                return Ok(());
+            }
+        }
+    }
 }
 
 /// shows the global money leaderboard
