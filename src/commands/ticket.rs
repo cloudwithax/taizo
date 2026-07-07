@@ -195,16 +195,14 @@ pub async fn config(
 #[poise::command(slash_command)]
 pub async fn close(
     ctx: Context<'_>,
-    #[description = "save transcript? (default: yes)"] save_transcript: Option<bool>,
-    #[description = "override close action: delete or archive (optional)"] action: Option<String>,
 ) -> Result<(), Error> {
     let guild_id = ctx.guild_id().ok_or("must be used in a guild")?;
     let gid = guild_id.get() as i64;
     let channel_id = ctx.channel_id().get() as i64;
     let db = &ctx.data().db;
 
-    let row = sqlx::query_as::<_, (i32, i64, String, bool, String)>(
-        "SELECT t.id, t.creator_id, t.status, c.allow_user_close, c.close_action \
+    let row = sqlx::query_as::<_, (i32, i64, String, bool)>(
+        "SELECT t.id, t.creator_id, t.status, c.allow_user_close \
          FROM tickets t JOIN ticket_config c ON t.guild_id = c.guild_id \
          WHERE t.channel_id = $1 AND t.guild_id = $2",
     )
@@ -213,7 +211,7 @@ pub async fn close(
     .fetch_optional(db)
     .await?;
 
-    let (ticket_id, creator_id, status, allow_user_close, default_action) = match row {
+    let (ticket_id, creator_id, status, allow_user_close) = match row {
         Some(r) => r,
         None => {
             ctx.send(
@@ -267,55 +265,37 @@ pub async fn close(
         return Ok(());
     }
 
-    let do_transcript = save_transcript.unwrap_or(true);
-    let final_action = action.unwrap_or(default_action);
+    // lock the channel
+    let ch = serenity::ChannelId::new(channel_id as u64);
+    let config_role_id = sqlx::query_scalar::<_, i64>("SELECT support_role_id FROM ticket_config WHERE guild_id = $1")
+        .bind(gid)
+        .fetch_one(db)
+        .await?;
 
-    if do_transcript {
-        let guild_name = ctx.guild().map(|g| g.name.clone()).unwrap_or_else(|| "server".to_string());
-        match generate_transcript(ctx.serenity_context(), &ctx.channel_id(), &guild_name).await {
-            Ok((content, filename)) => {
-                let log_channel_id = sqlx::query_scalar::<_, i64>("SELECT log_channel_id FROM ticket_config WHERE guild_id = $1")
-                    .bind(gid)
-                    .fetch_one(db)
-                    .await?;
-
-                if log_channel_id != 0 {
-                    let log_ch = serenity::ChannelId::new(log_channel_id as u64);
-                    let _ = log_ch
-                        .send_message(
-                            &ctx,
-                            serenity::CreateMessage::new()
-                                .content(format!(
-                                    "transcript for ticket #{} (opened by <@{}>)",
-                                    ticket_id, creator_id
-                                ))
-                                .add_file(serenity::CreateAttachment::bytes(
-                                    content.as_bytes(),
-                                    &filename,
-                                )),
-                        )
-                        .await;
-                }
-
-                let user = serenity::UserId::new(creator_id as u64);
-                let _ = user
-                    .dm(
-                        &ctx,
-                        serenity::CreateMessage::new()
-                            .content(format!("transcript for your ticket #{} in **{}**", ticket_id, guild_name))
-                            .add_file(serenity::CreateAttachment::bytes(
-                                content.as_bytes(),
-                                &filename,
-                            )),
-                    )
-                    .await;
-            }
-            Err(e) => {
-                ctx.say(format!("failed to generate transcript: {}", e))
-                    .await?;
-            }
-        }
-    }
+    let _ = ch.edit(
+        &ctx,
+        serenity::EditChannel::new().permissions(vec![
+            serenity::PermissionOverwrite {
+                allow: serenity::Permissions::empty(),
+                deny: serenity::Permissions::VIEW_CHANNEL | serenity::Permissions::SEND_MESSAGES,
+                kind: serenity::PermissionOverwriteType::Role(serenity::RoleId::new(guild_id.get())),
+            },
+            serenity::PermissionOverwrite {
+                allow: serenity::Permissions::VIEW_CHANNEL,
+                deny: serenity::Permissions::SEND_MESSAGES,
+                kind: serenity::PermissionOverwriteType::Member(ctx.author().id),
+            },
+            serenity::PermissionOverwrite {
+                allow: serenity::Permissions::VIEW_CHANNEL
+                    | serenity::Permissions::SEND_MESSAGES
+                    | serenity::Permissions::READ_MESSAGE_HISTORY,
+                deny: serenity::Permissions::empty(),
+                kind: serenity::PermissionOverwriteType::Role(
+                    serenity::RoleId::new(config_role_id as u64),
+                ),
+            },
+        ]),
+    ).await;
 
     sqlx::query("UPDATE tickets SET status = 'closed', closed_at = NOW(), closed_by = $1 WHERE id = $2")
         .bind(author_id)
@@ -323,55 +303,37 @@ pub async fn close(
         .execute(db)
         .await?;
 
-    let action_str = if final_action == "archive" {
-        let channels = guild_id.channels(&ctx).await.unwrap_or_default();
-        let archive_category = channels
-            .values()
-            .find(|c| c.kind == serenity::ChannelType::Category && c.name == "archived tickets");
+    // show action buttons
+    let embed = serenity::CreateEmbed::new()
+        .description(format!(
+            "ticket #{} closed by {}\n\nchoose an action below.",
+            ticket_id,
+            ctx.author().mention()
+        ))
+        .color(0xF28080);
 
-        let archive_cat_id = match archive_category {
-            Some(c) => c.id,
-            None => {
-                let new_cat = guild_id
-                    .create_channel(
-                        &ctx,
-                        serenity::CreateChannel::new("archived tickets")
-                            .kind(serenity::ChannelType::Category),
-                    )
-                    .await?;
-                new_cat.id
-            }
-        };
+    let transcript_btn = serenity::CreateButton::new("ticket_action_transcript")
+        .label("save transcript")
+        .style(serenity::ButtonStyle::Secondary)
+        .emoji('📝');
 
-        let ch = serenity::ChannelId::new(channel_id as u64);
-        ch.edit(
-            &ctx,
-            serenity::EditChannel::new().category(archive_cat_id),
-        )
-        .await?;
+    let archive_btn = serenity::CreateButton::new("ticket_action_archive")
+        .label("archive")
+        .style(serenity::ButtonStyle::Primary)
+        .emoji('📁');
 
-        sqlx::query("UPDATE tickets SET status = 'archived' WHERE id = $1")
-            .bind(ticket_id)
-            .execute(db)
-            .await?;
+    let delete_btn = serenity::CreateButton::new("ticket_action_delete")
+        .label("delete")
+        .style(serenity::ButtonStyle::Danger);
 
-        "archived"
-    } else {
-        let ch = serenity::ChannelId::new(channel_id as u64);
-        let _ = ch.delete(&ctx).await;
-        "deleted"
-    };
+    let action_row = serenity::CreateActionRow::Buttons(vec![transcript_btn, archive_btn, delete_btn]);
 
-    if final_action != "delete" {
-        ctx.send(
-            poise::CreateReply::default().embed(
-                serenity::CreateEmbed::new()
-                    .description(format!(" ticket #{} has been {}.", ticket_id, action_str))
-                    .color(0x80F291),
-            ),
-        )
-        .await?;
-    }
+    ctx.send(
+        poise::CreateReply::default()
+            .embed(embed)
+            .components(vec![action_row]),
+    )
+    .await?;
 
     Ok(())
 }
@@ -1029,8 +991,8 @@ pub async fn handle_ticket_close(
     let channel_id = component.channel_id.get() as i64;
     let user_id = component.user.id.get() as i64;
 
-    let row = sqlx::query_as::<_, (i32, i64, String, bool, String)>(
-        "SELECT t.id, t.creator_id, t.status, c.allow_user_close, c.close_action \
+    let row = sqlx::query_as::<_, (i32, i64, String, bool)>(
+        "SELECT t.id, t.creator_id, t.status, c.allow_user_close \
          FROM tickets t JOIN ticket_config c ON t.guild_id = c.guild_id \
          WHERE t.channel_id = $1 AND t.guild_id = $2",
     )
@@ -1039,7 +1001,7 @@ pub async fn handle_ticket_close(
     .fetch_optional(db)
     .await?;
 
-    let (ticket_id, creator_id, status, allow_user_close, close_action) = match row {
+    let (ticket_id, creator_id, status, allow_user_close) = match row {
         Some(r) => r,
         None => {
             component
@@ -1098,6 +1060,115 @@ pub async fn handle_ticket_close(
         return Ok(());
     }
 
+    // lock the channel: deny send for @everyone, keep staff access
+    let ch = serenity::ChannelId::new(channel_id as u64);
+    let config_role_id = sqlx::query_scalar::<_, i64>("SELECT support_role_id FROM ticket_config WHERE guild_id = $1")
+        .bind(gid)
+        .fetch_one(db)
+        .await?;
+
+    let _ = ch.edit(
+        ctx,
+        serenity::EditChannel::new().permissions(vec![
+            serenity::PermissionOverwrite {
+                allow: serenity::Permissions::empty(),
+                deny: serenity::Permissions::VIEW_CHANNEL | serenity::Permissions::SEND_MESSAGES,
+                kind: serenity::PermissionOverwriteType::Role(serenity::RoleId::new(guild_id.get())),
+            },
+            serenity::PermissionOverwrite {
+                allow: serenity::Permissions::VIEW_CHANNEL,
+                deny: serenity::Permissions::SEND_MESSAGES,
+                kind: serenity::PermissionOverwriteType::Member(component.user.id),
+            },
+            serenity::PermissionOverwrite {
+                allow: serenity::Permissions::VIEW_CHANNEL
+                    | serenity::Permissions::SEND_MESSAGES
+                    | serenity::Permissions::READ_MESSAGE_HISTORY,
+                deny: serenity::Permissions::empty(),
+                kind: serenity::PermissionOverwriteType::Role(
+                    serenity::RoleId::new(config_role_id as u64),
+                ),
+            },
+        ]),
+    ).await;
+
+    sqlx::query("UPDATE tickets SET status = 'closed', closed_at = NOW(), closed_by = $1 WHERE id = $2")
+        .bind(user_id)
+        .bind(ticket_id)
+        .execute(db)
+        .await?;
+
+    // show action buttons
+    let embed = serenity::CreateEmbed::new()
+        .description(format!(
+            "ticket #{} closed by {}\n\nchoose an action below.",
+            ticket_id,
+            component.user.mention()
+        ))
+        .color(0xF28080);
+
+    let transcript_btn = serenity::CreateButton::new("ticket_action_transcript")
+        .label("save transcript")
+        .style(serenity::ButtonStyle::Secondary)
+        .emoji('📝');
+
+    let archive_btn = serenity::CreateButton::new("ticket_action_archive")
+        .label("archive")
+        .style(serenity::ButtonStyle::Primary)
+        .emoji('📁');
+
+    let delete_btn = serenity::CreateButton::new("ticket_action_delete")
+        .label("delete")
+        .style(serenity::ButtonStyle::Danger);
+
+    let action_row = serenity::CreateActionRow::Buttons(vec![transcript_btn, archive_btn, delete_btn]);
+
+    let _ = component
+        .create_response(
+            ctx,
+            serenity::CreateInteractionResponse::UpdateMessage(
+                serenity::CreateInteractionResponseMessage::new()
+                    .embed(embed)
+                    .components(vec![action_row]),
+            ),
+        )
+        .await;
+
+    Ok(())
+}
+
+/// Handle the "save transcript" action button
+pub async fn handle_ticket_transcript(
+    ctx: &serenity::Context,
+    component: &serenity::ComponentInteraction,
+    db: &sqlx::PgPool,
+) -> Result<(), Error> {
+    let gid = component.guild_id.ok_or("must be used in a guild")?.get() as i64;
+    let channel_id = component.channel_id.get() as i64;
+
+    let row = sqlx::query_as::<_, (i32, i64)>(
+        "SELECT id, creator_id FROM tickets WHERE channel_id = $1 AND guild_id = $2",
+    )
+    .bind(channel_id)
+    .bind(gid)
+    .fetch_optional(db)
+    .await?;
+
+    let (ticket_id, creator_id) = match row {
+        Some(r) => r,
+        None => {
+            let _ = component.create_response(
+                ctx,
+                serenity::CreateInteractionResponse::Message(
+                    serenity::CreateInteractionResponseMessage::new()
+                        .content("ticket not found.")
+                        .ephemeral(true),
+                ),
+            ).await;
+            return Ok(());
+        }
+    };
+
     let guild_name = serenity::GuildId::new(gid as u64)
         .to_partial_guild(ctx)
         .await
@@ -1118,107 +1189,142 @@ pub async fn handle_ticket_close(
                     .send_message(
                         ctx,
                         serenity::CreateMessage::new()
-                            .content(format!(
-                                "transcript for ticket #{} (opened by <@{}>)",
-                                ticket_id, creator_id
-                            ))
-                            .add_file(serenity::CreateAttachment::bytes(
-                                content.as_bytes(),
-                                &filename,
-                            )),
+                            .content(format!("transcript for ticket #{} (opened by <@{}>)", ticket_id, creator_id))
+                            .add_file(serenity::CreateAttachment::bytes(content.as_bytes(), &filename)),
                     )
                     .await;
             }
 
-            let _ = component
-                .user
-                .dm(
-                    ctx,
-                    serenity::CreateMessage::new()
-                        .content(format!("transcript for your ticket #{} in **{}**", ticket_id, guild_name))
-                        .add_file(serenity::CreateAttachment::bytes(
-                            content.as_bytes(),
-                            &filename,
-                        )),
-                )
-                .await;
+            let _ = component.user.dm(
+                ctx,
+                serenity::CreateMessage::new()
+                    .content(format!("transcript for your ticket #{} in **{}**", ticket_id, guild_name))
+                    .add_file(serenity::CreateAttachment::bytes(content.as_bytes(), &filename)),
+            ).await;
+
+            let _ = component.create_response(
+                ctx,
+                serenity::CreateInteractionResponse::Message(
+                    serenity::CreateInteractionResponseMessage::new()
+                        .content("transcript saved and sent to you via dm.")
+                        .ephemeral(true),
+                ),
+            ).await;
         }
         Err(e) => {
             tracing::error!("failed to generate transcript for ticket #{}: {}", ticket_id, e);
+            let _ = component.create_response(
+                ctx,
+                serenity::CreateInteractionResponse::Message(
+                    serenity::CreateInteractionResponseMessage::new()
+                        .content("failed to generate transcript.")
+                        .ephemeral(true),
+                ),
+            ).await;
         }
     }
 
-    sqlx::query("UPDATE tickets SET status = 'closed', closed_at = NOW(), closed_by = $1 WHERE id = $2")
-        .bind(user_id)
+    Ok(())
+}
+
+/// Handle the "archive" action button
+pub async fn handle_ticket_archive(
+    ctx: &serenity::Context,
+    component: &serenity::ComponentInteraction,
+    db: &sqlx::PgPool,
+) -> Result<(), Error> {
+    let gid = component.guild_id.ok_or("must be used in a guild")?.get() as i64;
+    let channel_id = component.channel_id.get() as i64;
+
+    let row = sqlx::query_scalar::<_, i32>("SELECT id FROM tickets WHERE channel_id = $1 AND guild_id = $2")
+        .bind(channel_id)
+        .bind(gid)
+        .fetch_optional(db)
+        .await?;
+
+    let ticket_id = match row {
+        Some(id) => id,
+        None => {
+            let _ = component.create_response(
+                ctx,
+                serenity::CreateInteractionResponse::Message(
+                    serenity::CreateInteractionResponseMessage::new()
+                        .content("ticket not found.")
+                        .ephemeral(true),
+                ),
+            ).await;
+            return Ok(());
+        }
+    };
+
+    let channels = serenity::GuildId::new(gid as u64)
+        .channels(ctx)
+        .await
+        .unwrap_or_default();
+
+    let archive_category = channels
+        .values()
+        .find(|c| c.kind == serenity::ChannelType::Category && c.name == "archived tickets");
+
+    let archive_cat_id = match archive_category {
+        Some(c) => c.id,
+        None => {
+            let new_cat = serenity::GuildId::new(gid as u64)
+                .create_channel(
+                    ctx,
+                    serenity::CreateChannel::new("archived tickets")
+                        .kind(serenity::ChannelType::Category),
+                )
+                .await?;
+            new_cat.id
+        }
+    };
+
+    let ch = serenity::ChannelId::new(channel_id as u64);
+    let _ = ch.edit(ctx, serenity::EditChannel::new().category(archive_cat_id)).await;
+
+    sqlx::query("UPDATE tickets SET status = 'archived' WHERE id = $1")
         .bind(ticket_id)
         .execute(db)
         .await?;
 
-    if close_action == "archive" {
-        let channels = serenity::GuildId::new(gid as u64)
-            .channels(ctx)
-            .await
-            .unwrap_or_default();
+    let _ = component.create_response(
+        ctx,
+        serenity::CreateInteractionResponse::UpdateMessage(
+            serenity::CreateInteractionResponseMessage::new()
+                .content(format!("ticket #{} archived by {}", ticket_id, component.user.mention()))
+                .embeds(vec![])
+                .components(vec![]),
+        ),
+    ).await;
 
-        let archive_category = channels
-            .values()
-            .find(|c| c.kind == serenity::ChannelType::Category && c.name == "archived tickets");
+    Ok(())
+}
 
-        let archive_cat_id = match archive_category {
-            Some(c) => c.id,
-            None => {
-                let new_cat = serenity::GuildId::new(gid as u64)
-                    .create_channel(
-                        ctx,
-                        serenity::CreateChannel::new("archived tickets")
-                            .kind(serenity::ChannelType::Category),
-                    )
-                    .await?;
-                new_cat.id
-            }
-        };
+/// Handle the "delete" action button
+pub async fn handle_ticket_delete(
+    ctx: &serenity::Context,
+    component: &serenity::ComponentInteraction,
+    db: &sqlx::PgPool,
+) -> Result<(), Error> {
+    let gid = component.guild_id.ok_or("must be used in a guild")?.get() as i64;
+    let channel_id = component.channel_id.get() as i64;
 
-        let _ = ch
-            .edit(ctx, serenity::EditChannel::new().category(archive_cat_id))
-            .await;
+    let row = sqlx::query_scalar::<_, i32>("SELECT id FROM tickets WHERE channel_id = $1 AND guild_id = $2")
+        .bind(channel_id)
+        .bind(gid)
+        .fetch_optional(db)
+        .await?;
 
-        sqlx::query("UPDATE tickets SET status = 'archived' WHERE id = $1")
+    if let Some(ticket_id) = row {
+        sqlx::query("UPDATE tickets SET status = 'deleted' WHERE id = $1")
             .bind(ticket_id)
             .execute(db)
             .await?;
-
-        let _ = component
-            .create_response(
-                ctx,
-                serenity::CreateInteractionResponse::UpdateMessage(
-                    serenity::CreateInteractionResponseMessage::new()
-                        .content(format!(
-                            "ticket #{} has been archived by {}. transcript saved.",
-                            ticket_id,
-                            component.user.mention()
-                        ))
-                        .components(vec![]),
-                ),
-            )
-            .await;
-    } else {
-        let _ = component
-            .create_response(
-                ctx,
-                serenity::CreateInteractionResponse::UpdateMessage(
-                    serenity::CreateInteractionResponseMessage::new()
-                        .content(format!(
-                            "ticket #{} closed by {}. deleting channel...",
-                            ticket_id,
-                            component.user.mention()
-                        ))
-                        .components(vec![]),
-                ),
-            )
-            .await;
-
-        let _ = ch.delete(ctx).await;
     }
+
+    let ch = serenity::ChannelId::new(channel_id as u64);
+    let _ = ch.delete(ctx).await;
 
     Ok(())
 }

@@ -189,6 +189,30 @@ async fn main() {
                                         }
                                     }
                                 }
+                                if component.data.custom_id == "ticket_action_transcript" {
+                                    let db = ctx.data.read().await.get::<DbKey>().cloned();
+                                    if let Some(db) = db {
+                                        if let Err(e) = commands::ticket::handle_ticket_transcript(ctx, component, &db).await {
+                                            error!("ticket_transcript error: {:?}", e);
+                                        }
+                                    }
+                                }
+                                if component.data.custom_id == "ticket_action_archive" {
+                                    let db = ctx.data.read().await.get::<DbKey>().cloned();
+                                    if let Some(db) = db {
+                                        if let Err(e) = commands::ticket::handle_ticket_archive(ctx, component, &db).await {
+                                            error!("ticket_archive error: {:?}", e);
+                                        }
+                                    }
+                                }
+                                if component.data.custom_id == "ticket_action_delete" {
+                                    let db = ctx.data.read().await.get::<DbKey>().cloned();
+                                    if let Some(db) = db {
+                                        if let Err(e) = commands::ticket::handle_ticket_delete(ctx, component, &db).await {
+                                            error!("ticket_delete error: {:?}", e);
+                                        }
+                                    }
+                                }
                             }
                             if let Some(modal) = interaction.clone().modal_submit() {
                                 if modal.data.custom_id.starts_with("rr_modal_") {
