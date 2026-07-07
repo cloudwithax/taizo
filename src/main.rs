@@ -176,13 +176,17 @@ async fn main() {
                                 if component.data.custom_id == "ticket_open" {
                                     let db = ctx.data.read().await.get::<DbKey>().cloned();
                                     if let Some(db) = db {
-                                        let _ = commands::ticket::handle_ticket_open(ctx, component, &db).await;
+                                        if let Err(e) = commands::ticket::handle_ticket_open(ctx, component, &db).await {
+                                            error!("ticket_open error: {:?}", e);
+                                        }
                                     }
                                 }
                                 if component.data.custom_id == "ticket_close" {
                                     let db = ctx.data.read().await.get::<DbKey>().cloned();
                                     if let Some(db) = db {
-                                        let _ = commands::ticket::handle_ticket_close(ctx, component, &db).await;
+                                        if let Err(e) = commands::ticket::handle_ticket_close(ctx, component, &db).await {
+                                            error!("ticket_close error: {:?}", e);
+                                        }
                                     }
                                 }
                             }
@@ -196,7 +200,9 @@ async fn main() {
                                 if modal.data.custom_id == "ticket_modal" {
                                     let db = ctx.data.read().await.get::<DbKey>().cloned();
                                     if let Some(db) = db {
-                                        let _ = commands::ticket::handle_ticket_modal(ctx, &modal, &db).await;
+                                        if let Err(e) = commands::ticket::handle_ticket_modal(ctx, &modal, &db).await {
+                                            error!("ticket_modal error: {:?}", e);
+                                        }
                                     }
                                 }
                             }

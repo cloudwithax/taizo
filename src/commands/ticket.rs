@@ -771,9 +771,20 @@ pub async fn handle_ticket_modal(
     modal: &serenity::ModalInteraction,
     db: &sqlx::PgPool,
 ) -> Result<(), Error> {
-    let guild_id = modal
-        .guild_id
-        .ok_or("must be used in a guild")?;
+    let guild_id = match modal.guild_id {
+        Some(g) => g,
+        None => {
+            let _ = modal.create_response(
+                ctx,
+                serenity::CreateInteractionResponse::Message(
+                    serenity::CreateInteractionResponseMessage::new()
+                        .content("this can only be used in a server.")
+                        .ephemeral(true),
+                ),
+            ).await;
+            return Ok(());
+        }
+    };
     let gid = guild_id.get() as i64;
     let user_id = modal.user.id.get() as i64;
 
@@ -792,37 +803,76 @@ pub async fn handle_ticket_modal(
     }
 
     if subject.is_empty() || description.is_empty() {
-        modal
-            .create_response(
-                ctx,
-                serenity::CreateInteractionResponse::Message(
-                    serenity::CreateInteractionResponseMessage::new()
-                        .content("please fill in all fields.")
-                        .ephemeral(true),
-                ),
-            )
-            .await?;
+        let _ = modal.create_response(
+            ctx,
+            serenity::CreateInteractionResponse::Message(
+                serenity::CreateInteractionResponseMessage::new()
+                    .content("please fill in all fields.")
+                    .ephemeral(true),
+            ),
+        ).await;
         return Ok(());
     }
 
-    let config = sqlx::query_as::<_, (i64, i64)>(
+    let config = match sqlx::query_as::<_, (i64, i64)>(
         "SELECT category_id, support_role_id FROM ticket_config WHERE guild_id = $1",
     )
     .bind(gid)
-    .fetch_one(db)
-    .await?;
+    .fetch_optional(db)
+    .await
+    {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            let _ = modal.create_response(
+                ctx,
+                serenity::CreateInteractionResponse::Message(
+                    serenity::CreateInteractionResponseMessage::new()
+                        .content("ticket system is not configured. an admin needs to run `/ticket setup`.")
+                        .ephemeral(true),
+                ),
+            ).await;
+            return Ok(());
+        }
+        Err(e) => {
+            tracing::error!("ticket modal db error: {}", e);
+            let _ = modal.create_response(
+                ctx,
+                serenity::CreateInteractionResponse::Message(
+                    serenity::CreateInteractionResponseMessage::new()
+                        .content("a database error occurred. please try again.")
+                        .ephemeral(true),
+                ),
+            ).await;
+            return Ok(());
+        }
+    };
 
     let (category_id, support_role_id) = config;
 
-    let max_number: Option<i32> = sqlx::query_scalar("SELECT MAX(number) FROM tickets WHERE guild_id = $1")
+    let max_number: Option<i32> = match sqlx::query_scalar("SELECT MAX(number) FROM tickets WHERE guild_id = $1")
         .bind(gid)
         .fetch_one(db)
-        .await?;
+        .await
+    {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::error!("ticket number query error: {}", e);
+            let _ = modal.create_response(
+                ctx,
+                serenity::CreateInteractionResponse::Message(
+                    serenity::CreateInteractionResponseMessage::new()
+                        .content("a database error occurred. please try again.")
+                        .ephemeral(true),
+                ),
+            ).await;
+            return Ok(());
+        }
+    };
     let ticket_number = max_number.unwrap_or(0) + 1;
 
     let guild = serenity::GuildId::new(guild_id.get());
     let channel_name = format!("ticket-{}", ticket_number);
-    let ticket_channel = guild
+    let ticket_channel = match guild
         .create_channel(
             ctx,
             serenity::CreateChannel::new(&channel_name)
@@ -852,9 +902,24 @@ pub async fn handle_ticket_modal(
                     },
                 ]),
         )
-        .await?;
+        .await
+    {
+        Ok(ch) => ch,
+        Err(e) => {
+            tracing::error!("ticket channel creation error: {}", e);
+            let _ = modal.create_response(
+                ctx,
+                serenity::CreateInteractionResponse::Message(
+                    serenity::CreateInteractionResponseMessage::new()
+                        .content(format!("failed to create ticket channel: {}", e))
+                        .ephemeral(true),
+                ),
+            ).await;
+            return Ok(());
+        }
+    };
 
-    sqlx::query(
+    if let Err(e) = sqlx::query(
         "INSERT INTO tickets (guild_id, channel_id, creator_id, number) VALUES ($1, $2, $3, $4)",
     )
     .bind(gid)
@@ -862,7 +927,19 @@ pub async fn handle_ticket_modal(
     .bind(user_id)
     .bind(ticket_number)
     .execute(db)
-    .await?;
+    .await
+    {
+        tracing::error!("ticket insert error: {}", e);
+        let _ = modal.create_response(
+            ctx,
+            serenity::CreateInteractionResponse::Message(
+                serenity::CreateInteractionResponseMessage::new()
+                    .content("failed to save ticket to database. please try again.")
+                    .ephemeral(true),
+            ),
+        ).await;
+        return Ok(());
+    }
 
     let embed = serenity::CreateEmbed::new()
         .title(format!("ticket #{}", ticket_number))
@@ -882,7 +959,7 @@ pub async fn handle_ticket_modal(
 
     let action_row = serenity::CreateActionRow::Buttons(vec![close_button]);
 
-    ticket_channel
+    let _ = ticket_channel
         .send_message(
             ctx,
             serenity::CreateMessage::new()
@@ -893,9 +970,9 @@ pub async fn handle_ticket_modal(
                 ))
                 .components(vec![action_row]),
         )
-        .await?;
+        .await;
 
-    modal
+    let _ = modal
         .create_response(
             ctx,
             serenity::CreateInteractionResponse::Message(
@@ -904,7 +981,7 @@ pub async fn handle_ticket_modal(
                     .ephemeral(true),
             ),
         )
-        .await?;
+        .await;
 
     Ok(())
 }
