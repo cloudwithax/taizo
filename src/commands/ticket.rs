@@ -1282,43 +1282,71 @@ fn resolve_mentions(
     roles: &HashMap<serenity::RoleId, (String, Option<serenity::Colour>)>,
     channels: &HashMap<serenity::ChannelId, String>,
 ) -> String {
-    let mut result = content.to_string();
+    let mut result = Vec::new();
+    let bytes = content.as_bytes();
+    let mut i = 0;
 
-    // replace user mentions: <@ID> and <@!ID>
-    for (uid, name) in users {
-        let mention_no_nick = format!("<@{}>", uid);
-        let mention_with_nick = format!("<@!{}>", uid);
-        let styled = format!(
-            "<span class=\"mention mention-user\">@{}</span>",
-            html_escape(name)
-        );
-        result = result.replace(&mention_no_nick, &styled);
-        result = result.replace(&mention_with_nick, &styled);
+    while i < bytes.len() {
+        if bytes[i] == b'<' && i + 1 < bytes.len() {
+            let start = i + 1;
+            if bytes[start] == b'@' {
+                // could be <@ID>, <@!ID>, or <@&ID>
+                let (id_start, is_role) = if start + 1 < bytes.len() && bytes[start + 1] == b'!' {
+                    (start + 2, false)
+                } else if start + 1 < bytes.len() && bytes[start + 1] == b'&' {
+                    (start + 2, true)
+                } else {
+                    (start + 1, false)
+                };
+                if let Some(end_offset) = content[id_start..].find('>') {
+                    let id_str = &content[id_start..id_start + end_offset];
+                    if let Ok(id) = id_str.parse::<u64>() {
+                        if is_role {
+                            if let Some((name, color)) = roles.get(&serenity::RoleId::new(id)) {
+                                let bg = color.map(|c| c.hex()).unwrap_or_else(|| "#5865F2".to_string());
+                                result.push(format!(
+                                    "<span class=\"mention mention-role\" style=\"background:{}\">@{}</span>",
+                                    bg, html_escape(name)
+                                ));
+                                i = id_start + end_offset + 1;
+                                continue;
+                            }
+                        } else if let Some(name) = users.get(&serenity::UserId::new(id)) {
+                            result.push(format!(
+                                "<span class=\"mention mention-user\">@{}</span>",
+                                html_escape(name)
+                            ));
+                            i = id_start + end_offset + 1;
+                            continue;
+                        }
+                    }
+                }
+            } else if bytes[start] == b'#' {
+                let id_start = start + 1;
+                if let Some(end_offset) = content[id_start..].find('>') {
+                    let id_str = &content[id_start..id_start + end_offset];
+                    if let Ok(id) = id_str.parse::<u64>() {
+                        if let Some(name) = channels.get(&serenity::ChannelId::new(id)) {
+                            result.push(format!(
+                                "<span class=\"mention mention-channel\">#{}</span>",
+                                html_escape(name)
+                            ));
+                            i = id_start + end_offset + 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+        // not a mention — collect plain text until next '<' or end
+        let text_start = i;
+        while i < bytes.len() && bytes[i] != b'<' {
+            i += 1;
+        }
+        result.push(html_escape(&content[text_start..i]));
     }
 
-    // replace role mentions: <@&ID>
-    for (rid, (name, color)) in roles {
-        let mention = format!("<@&{}>", rid);
-        let bg = color.map(|c| c.hex()).unwrap_or_else(|| "#5865F2".to_string());
-        let styled = format!(
-            "<span class=\"mention mention-role\" style=\"background:{}\">@{}</span>",
-            bg,
-            html_escape(name)
-        );
-        result = result.replace(&mention, &styled);
-    }
-
-    // replace channel mentions: <#ID>
-    for (cid, name) in channels {
-        let mention = format!("<#{}>", cid);
-        let styled = format!(
-            "<span class=\"mention mention-channel\">#{}</span>",
-            html_escape(name)
-        );
-        result = result.replace(&mention, &styled);
-    }
-
-    result
+    result.join("")
 }
 
 async fn generate_transcript(
@@ -1430,8 +1458,7 @@ async fn generate_transcript(
             .timestamp
             .format("%Y-%m-%d %H:%M:%S UTC")
             .to_string();
-        let escaped = html_escape(&msg.content);
-        let content = resolve_mentions(&escaped, &user_map, &role_map, &channel_map);
+        let content = resolve_mentions(&msg.content, &user_map, &role_map, &channel_map);
         let attachments = if msg.attachments.is_empty() {
             String::new()
         } else {
