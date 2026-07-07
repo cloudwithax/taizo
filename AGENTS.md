@@ -7,7 +7,11 @@ Rust Discord bot (serenity 0.12 + poise 0.6) with PostgreSQL (sqlx). Single crat
 ## Rules
 
 - All visible copy (embed titles, descriptions, field names, field values) must be strictly lowercase. No exceptions.
-- Please reference #
+- Please reference the rules for [when you make changes](#when-you-make-changes) everytime you make changes
+- Dont over think shit.
+- Use menu buttons and embeds for most interactions
+- If a feature you need exists in a crate, use it. Otherwise make it yourself.
+
 ## Build and run
 
 ```bash

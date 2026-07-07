@@ -1225,6 +1225,102 @@ pub async fn handle_ticket_close(
 
 // ── helpers ───────────────────────────────────────────────────────────
 
+use std::collections::HashMap;
+
+fn parse_mentions(content: &str) -> (Vec<serenity::UserId>, Vec<serenity::RoleId>, Vec<serenity::ChannelId>) {
+    let mut user_ids = Vec::new();
+    let mut role_ids = Vec::new();
+    let mut channel_ids = Vec::new();
+
+    let bytes = content.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'<' && i + 1 < bytes.len() {
+            let start = i + 1;
+            if bytes[start] == b'@' {
+                // could be <@ID> or <@!ID> or <@&ID>
+                let (id_start, is_role) = if start + 1 < bytes.len() && bytes[start + 1] == b'!' {
+                    (start + 2, false)
+                } else if start + 1 < bytes.len() && bytes[start + 1] == b'&' {
+                    (start + 2, true)
+                } else {
+                    (start + 1, false)
+                };
+                if let Some(end) = content[id_start..].find('>') {
+                    let id_str = &content[id_start..id_start + end];
+                    if let Ok(id) = id_str.parse::<u64>() {
+                        if is_role {
+                            role_ids.push(serenity::RoleId::new(id));
+                        } else {
+                            user_ids.push(serenity::UserId::new(id));
+                        }
+                    }
+                    i = id_start + end + 1;
+                    continue;
+                }
+            } else if bytes[start] == b'#' {
+                let id_start = start + 1;
+                if let Some(end) = content[id_start..].find('>') {
+                    let id_str = &content[id_start..id_start + end];
+                    if let Ok(id) = id_str.parse::<u64>() {
+                        channel_ids.push(serenity::ChannelId::new(id));
+                    }
+                    i = id_start + end + 1;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+
+    (user_ids, role_ids, channel_ids)
+}
+
+fn resolve_mentions(
+    content: &str,
+    users: &HashMap<serenity::UserId, String>,
+    roles: &HashMap<serenity::RoleId, (String, Option<serenity::Colour>)>,
+    channels: &HashMap<serenity::ChannelId, String>,
+) -> String {
+    let mut result = content.to_string();
+
+    // replace user mentions: <@ID> and <@!ID>
+    for (uid, name) in users {
+        let mention_no_nick = format!("<@{}>", uid);
+        let mention_with_nick = format!("<@!{}>", uid);
+        let styled = format!(
+            "<span class=\"mention mention-user\">@{}</span>",
+            html_escape(name)
+        );
+        result = result.replace(&mention_no_nick, &styled);
+        result = result.replace(&mention_with_nick, &styled);
+    }
+
+    // replace role mentions: <@&ID>
+    for (rid, (name, color)) in roles {
+        let mention = format!("<@&{}>", rid);
+        let bg = color.map(|c| c.hex()).unwrap_or_else(|| "#5865F2".to_string());
+        let styled = format!(
+            "<span class=\"mention mention-role\" style=\"background:{}\">@{}</span>",
+            bg,
+            html_escape(name)
+        );
+        result = result.replace(&mention, &styled);
+    }
+
+    // replace channel mentions: <#ID>
+    for (cid, name) in channels {
+        let mention = format!("<#{}>", cid);
+        let styled = format!(
+            "<span class=\"mention mention-channel\">#{}</span>",
+            html_escape(name)
+        );
+        result = result.replace(&mention, &styled);
+    }
+
+    result
+}
+
 async fn generate_transcript(
     ctx: &serenity::Context,
     channel_id: &serenity::ChannelId,
@@ -1251,6 +1347,49 @@ async fn generate_transcript(
 
     messages.reverse();
 
+    // collect all unique mention IDs across all messages
+    let mut all_user_ids = Vec::new();
+    let mut all_role_ids = Vec::new();
+    let mut all_channel_ids = Vec::new();
+    for msg in &messages {
+        let (uids, rids, cids) = parse_mentions(&msg.content);
+        all_user_ids.extend(uids);
+        all_role_ids.extend(rids);
+        all_channel_ids.extend(cids);
+    }
+    all_user_ids.sort();
+    all_user_ids.dedup();
+    all_role_ids.sort();
+    all_role_ids.dedup();
+    all_channel_ids.sort();
+    all_channel_ids.dedup();
+
+    // batch fetch users
+    let mut user_map: HashMap<serenity::UserId, String> = HashMap::new();
+    for uid in &all_user_ids {
+        if let Ok(user) = ctx.http.get_user(*uid).await {
+            user_map.insert(user.id, user.name.clone());
+        }
+    }
+
+    // fetch roles (from guild)
+    let mut role_map: HashMap<serenity::RoleId, (String, Option<serenity::Colour>)> = HashMap::new();
+    if let Ok(serenity::Channel::Guild(ch)) = channel_id.to_channel(ctx).await {
+        if let Some(guild_data) = ch.guild(ctx) {
+            for (role_id, role) in &guild_data.roles {
+                role_map.insert(*role_id, (role.name.clone(), Some(role.colour)));
+            }
+        }
+    }
+
+    // fetch channel names
+    let mut channel_map: HashMap<serenity::ChannelId, String> = HashMap::new();
+    for cid in &all_channel_ids {
+        if let Ok(serenity::Channel::Guild(ch)) = cid.to_channel(ctx).await {
+            channel_map.insert(*cid, ch.name.clone());
+        }
+    }
+
     let mut html = format!(
         "<!DOCTYPE html>\n<html>\n<head>\n\
          <meta charset=\"utf-8\">\n\
@@ -1271,6 +1410,10 @@ async fn generate_transcript(
          .text {{ color: #dcddde; font-size: 14px; line-height: 1.4; \
                   word-wrap: break-word; margin-top: 2px; }}\n\
          .attachment {{ color: #00aff4; font-size: 13px; margin-top: 4px; }}\n\
+         .mention {{ padding: 0 4px; border-radius: 4px; font-weight: 500; font-size: 14px; }}\n\
+         .mention-user {{ background: rgba(88,101,242,0.3); color: #dee0fc; }}\n\
+         .mention-role {{ color: #fff; }}\n\
+         .mention-channel {{ background: rgba(0,175,244,0.3); color: #00d4ff; }}\n\
          </style>\n</head>\n<body>\n\
          <div class=\"header\">\n\
          <h1>transcript — {}</h1>\n\
@@ -1287,7 +1430,8 @@ async fn generate_transcript(
             .timestamp
             .format("%Y-%m-%d %H:%M:%S UTC")
             .to_string();
-        let content = html_escape(&msg.content);
+        let escaped = html_escape(&msg.content);
+        let content = resolve_mentions(&escaped, &user_map, &role_map, &channel_map);
         let attachments = if msg.attachments.is_empty() {
             String::new()
         } else {
