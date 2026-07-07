@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS ticket_config (
     panel_channel_id BIGINT,
     panel_message_id BIGINT,
     log_channel_id BIGINT,
+    archive_category_id BIGINT,
     allow_user_close BOOLEAN NOT NULL DEFAULT true,
     close_action TEXT NOT NULL DEFAULT 'delete'
 );

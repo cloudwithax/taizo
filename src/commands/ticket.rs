@@ -6,7 +6,7 @@ use serenity::Mentionable;
 #[poise::command(
     slash_command,
     required_permissions = "MANAGE_GUILD",
-    subcommands("setup", "config", "close", "add", "remove", "archive", "delete", "transcript")
+    subcommands("setup", "config", "setarchivecategory", "close", "add", "remove", "archive", "delete", "transcript")
 )]
 pub async fn ticket(ctx: Context<'_>) -> Result<(), Error> {
     ctx.say("use a subcommand: `setup`, `config`, `close`, `add`, `remove`, `archive`, `delete`, or `transcript`")
@@ -22,6 +22,7 @@ pub async fn setup(
     #[description = "category for ticket channels"] category: serenity::Channel,
     #[description = "role that has access to tickets"] support_role: serenity::Role,
     #[description = "channel for ticket logs/transcripts (optional)"] log_channel: Option<serenity::Channel>,
+    #[description = "category for archived tickets (optional, auto-created if omitted)"] archive_category: Option<serenity::Channel>,
 ) -> Result<(), Error> {
     let guild_id = ctx.guild_id().ok_or("must be used in a guild")?;
     let gid = guild_id.get() as i64;
@@ -40,10 +41,26 @@ pub async fn setup(
         return Ok(());
     }
 
+    // validate archive category if provided
+    if let Some(ref ac) = archive_category {
+        if !matches!(ac, serenity::Channel::Guild(ref ch) if ch.kind == serenity::ChannelType::Category) {
+            ctx.send(
+                poise::CreateReply::default().embed(
+                    serenity::CreateEmbed::new()
+                        .description(format!("{} is not a category channel. please select a category.", ac.mention()))
+                        .color(0xF28080),
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+    }
+
     let category_id = category.id().get();
     let support_role_id = support_role.id.get();
     let panel_channel_id = panel_channel.id().get();
     let log_channel_id = log_channel.as_ref().map(|c| c.id().get());
+    let archive_category_id = archive_category.as_ref().map(|c| c.id().get());
 
     let embed = serenity::CreateEmbed::new()
         .title("support tickets")
@@ -68,10 +85,10 @@ pub async fn setup(
         .await?;
 
     sqlx::query(
-        "INSERT INTO ticket_config (guild_id, category_id, support_role_id, panel_channel_id, panel_message_id, log_channel_id) \
-         VALUES ($1, $2, $3, $4, $5, $6) \
+        "INSERT INTO ticket_config (guild_id, category_id, support_role_id, panel_channel_id, panel_message_id, log_channel_id, archive_category_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7) \
          ON CONFLICT (guild_id) DO UPDATE SET \
-         category_id = $2, support_role_id = $3, panel_channel_id = $4, panel_message_id = $5, log_channel_id = $6",
+         category_id = $2, support_role_id = $3, panel_channel_id = $4, panel_message_id = $5, log_channel_id = $6, archive_category_id = $7",
     )
     .bind(gid)
     .bind(category_id as i64)
@@ -79,6 +96,7 @@ pub async fn setup(
     .bind(panel_channel_id as i64)
     .bind(panel_msg.id.get() as i64)
     .bind(log_channel_id.map(|id| id as i64))
+    .bind(archive_category_id.map(|id| id as i64))
     .execute(db)
     .await?;
 
@@ -89,7 +107,8 @@ pub async fn setup(
                     "✅ ticket panel set up in {}\n\
                      category: {}\n\
                      support role: {}\n\
-                     log channel: {}",
+                     log channel: {}\n\
+                     archive category: {}",
                     panel_channel.mention(),
                     category.mention(),
                     support_role.mention(),
@@ -97,6 +116,10 @@ pub async fn setup(
                         .as_ref()
                         .map(|c| c.mention().to_string())
                         .unwrap_or_else(|| "none".to_string()),
+                    archive_category
+                        .as_ref()
+                        .map(|c| c.mention().to_string())
+                        .unwrap_or_else(|| "auto-created".to_string()),
                 ))
                 .color(0x80F291),
         ),
@@ -169,6 +192,11 @@ pub async fn config(
         .fetch_one(db)
         .await?;
 
+    let archive_category_id: Option<i64> = sqlx::query_scalar("SELECT archive_category_id FROM ticket_config WHERE guild_id = $1")
+        .bind(gid)
+        .fetch_one(db)
+        .await?;
+
     ctx.send(
         poise::CreateReply::default().embed(
             serenity::CreateEmbed::new()
@@ -182,9 +210,72 @@ pub async fn config(
                         .unwrap_or_else(|| "none".to_string()),
                     true,
                 )
+                .field(
+                    "archive category",
+                    archive_category_id
+                        .map(|id| format!("<#{}>", id))
+                        .unwrap_or_else(|| "auto-created".to_string()),
+                    true,
+                )
                 .field("allow user close", allow_user_close.to_string(), true)
                 .field("close action", &close_action, true)
                 .color(0x5865F2),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+/// set the archive category for closed tickets
+#[poise::command(slash_command, required_permissions = "MANAGE_GUILD")]
+pub async fn setarchivecategory(
+    ctx: Context<'_>,
+    #[description = "category for archived tickets"] archive_category: serenity::Channel,
+) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().ok_or("must be used in a guild")?;
+    let gid = guild_id.get() as i64;
+    let db = &ctx.data().db;
+
+    if !matches!(archive_category, serenity::Channel::Guild(ref ch) if ch.kind == serenity::ChannelType::Category) {
+        ctx.send(
+            poise::CreateReply::default().embed(
+                serenity::CreateEmbed::new()
+                    .description(format!("{} is not a category channel. please select a category.", archive_category.mention()))
+                    .color(0xF28080),
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let exists = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM ticket_config WHERE guild_id = $1)")
+        .bind(gid)
+        .fetch_one(db)
+        .await?;
+
+    if !exists {
+        ctx.send(
+            poise::CreateReply::default().embed(
+                serenity::CreateEmbed::new()
+                    .description("no ticket config found. use `/ticket setup` first.")
+                    .color(0xF28080),
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    sqlx::query("UPDATE ticket_config SET archive_category_id = $1 WHERE guild_id = $2")
+        .bind(archive_category.id().get() as i64)
+        .bind(gid)
+        .execute(db)
+        .await?;
+
+    ctx.send(
+        poise::CreateReply::default().embed(
+            serenity::CreateEmbed::new()
+                .description(format!("✅ archive category set to {}", archive_category.mention()))
+                .color(0x80F291),
         ),
     )
     .await?;
@@ -495,14 +586,14 @@ pub async fn archive(ctx: Context<'_>) -> Result<(), Error> {
         return Ok(());
     }
 
-    let channels = guild_id.channels(&ctx).await.unwrap_or_default();
-    let archive_category = channels
-        .values()
-        .find(|c| c.kind == serenity::ChannelType::Category && c.name == "archived tickets");
-
-    let archive_cat_id = match archive_category {
-        Some(c) => c.id,
-        None => {
+    let archive_cat_id = match sqlx::query_scalar::<_, Option<i64>>("SELECT archive_category_id FROM ticket_config WHERE guild_id = $1")
+        .bind(gid)
+        .fetch_one(db)
+        .await?
+    {
+        Some(cat_id) => cat_id as u64,
+        _ => {
+            // fallback: create one
             let support_role_id = sqlx::query_scalar::<_, i64>("SELECT support_role_id FROM ticket_config WHERE guild_id = $1")
                 .bind(gid)
                 .fetch_one(db)
@@ -526,14 +617,20 @@ pub async fn archive(ctx: Context<'_>) -> Result<(), Error> {
                         ]),
                 )
                 .await?;
-            new_cat.id
+            // save it for next time
+            let _ = sqlx::query("UPDATE ticket_config SET archive_category_id = $1 WHERE guild_id = $2")
+                .bind(new_cat.id.get() as i64)
+                .bind(gid)
+                .execute(db)
+                .await;
+            new_cat.id.get()
         }
     };
 
     let ch = serenity::ChannelId::new(channel_id as u64);
     ch.edit(
         &ctx,
-        serenity::EditChannel::new().category(archive_cat_id),
+        serenity::EditChannel::new().category(serenity::ChannelId::new(archive_cat_id)),
     )
     .await?;
 
@@ -1273,18 +1370,13 @@ pub async fn handle_ticket_archive(
         }
     };
 
-    let channels = serenity::GuildId::new(gid as u64)
-        .channels(ctx)
-        .await
-        .unwrap_or_default();
-
-    let archive_category = channels
-        .values()
-        .find(|c| c.kind == serenity::ChannelType::Category && c.name == "archived tickets");
-
-    let archive_cat_id = match archive_category {
-        Some(c) => c.id,
-        None => {
+    let archive_cat_id = match sqlx::query_scalar::<_, Option<i64>>("SELECT archive_category_id FROM ticket_config WHERE guild_id = $1")
+        .bind(gid)
+        .fetch_one(db)
+        .await?
+    {
+        Some(cat_id) => cat_id as u64,
+        _ => {
             let support_role_id = sqlx::query_scalar::<_, i64>("SELECT support_role_id FROM ticket_config WHERE guild_id = $1")
                 .bind(gid)
                 .fetch_one(db)
@@ -1308,12 +1400,17 @@ pub async fn handle_ticket_archive(
                         ]),
                 )
                 .await?;
-            new_cat.id
+            let _ = sqlx::query("UPDATE ticket_config SET archive_category_id = $1 WHERE guild_id = $2")
+                .bind(new_cat.id.get() as i64)
+                .bind(gid)
+                .execute(db)
+                .await;
+            new_cat.id.get()
         }
     };
 
     let ch = serenity::ChannelId::new(channel_id as u64);
-    let _ = ch.edit(ctx, serenity::EditChannel::new().category(archive_cat_id)).await;
+    let _ = ch.edit(ctx, serenity::EditChannel::new().category(serenity::ChannelId::new(archive_cat_id))).await;
 
     sqlx::query("UPDATE tickets SET status = 'archived' WHERE id = $1")
         .bind(ticket_id)
