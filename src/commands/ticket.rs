@@ -503,11 +503,27 @@ pub async fn archive(ctx: Context<'_>) -> Result<(), Error> {
     let archive_cat_id = match archive_category {
         Some(c) => c.id,
         None => {
+            let support_role_id = sqlx::query_scalar::<_, i64>("SELECT support_role_id FROM ticket_config WHERE guild_id = $1")
+                .bind(gid)
+                .fetch_one(db)
+                .await?;
             let new_cat = guild_id
                 .create_channel(
                     &ctx,
                     serenity::CreateChannel::new("archived tickets")
-                        .kind(serenity::ChannelType::Category),
+                        .kind(serenity::ChannelType::Category)
+                        .permissions(vec![
+                            serenity::PermissionOverwrite {
+                                allow: serenity::Permissions::empty(),
+                                deny: serenity::Permissions::VIEW_CHANNEL,
+                                kind: serenity::PermissionOverwriteType::Role(serenity::RoleId::new(guild_id.get())),
+                            },
+                            serenity::PermissionOverwrite {
+                                allow: serenity::Permissions::VIEW_CHANNEL | serenity::Permissions::READ_MESSAGE_HISTORY,
+                                deny: serenity::Permissions::empty(),
+                                kind: serenity::PermissionOverwriteType::Role(serenity::RoleId::new(support_role_id as u64)),
+                            },
+                        ]),
                 )
                 .await?;
             new_cat.id
@@ -1269,11 +1285,27 @@ pub async fn handle_ticket_archive(
     let archive_cat_id = match archive_category {
         Some(c) => c.id,
         None => {
+            let support_role_id = sqlx::query_scalar::<_, i64>("SELECT support_role_id FROM ticket_config WHERE guild_id = $1")
+                .bind(gid)
+                .fetch_one(db)
+                .await?;
             let new_cat = serenity::GuildId::new(gid as u64)
                 .create_channel(
                     ctx,
                     serenity::CreateChannel::new("archived tickets")
-                        .kind(serenity::ChannelType::Category),
+                        .kind(serenity::ChannelType::Category)
+                        .permissions(vec![
+                            serenity::PermissionOverwrite {
+                                allow: serenity::Permissions::empty(),
+                                deny: serenity::Permissions::VIEW_CHANNEL,
+                                kind: serenity::PermissionOverwriteType::Role(serenity::RoleId::new(gid as u64)),
+                            },
+                            serenity::PermissionOverwrite {
+                                allow: serenity::Permissions::VIEW_CHANNEL | serenity::Permissions::READ_MESSAGE_HISTORY,
+                                deny: serenity::Permissions::empty(),
+                                kind: serenity::PermissionOverwriteType::Role(serenity::RoleId::new(support_role_id as u64)),
+                            },
+                        ]),
                 )
                 .await?;
             new_cat.id
