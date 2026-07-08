@@ -126,7 +126,7 @@ async fn main() {
                     }
                 })
             },
-            event_handler: |ctx, event, _framework, _data| {
+            event_handler: |ctx, event, framework, _data| {
                 Box::pin(async move {
                     match event {
                         serenity::FullEvent::Message { new_message } => {
@@ -362,7 +362,8 @@ async fn main() {
                         serenity::FullEvent::InteractionCreate { interaction } => {
                             if let serenity::Interaction::Component(component) = interaction {
                                 if component.data.custom_id.starts_with("help_") {
-                                    let _ = commands::utility::handle_help_button(ctx, component).await;
+                                    let cogs = commands::utility::build_cogs(&framework.options().commands);
+                                    let _ = commands::utility::handle_help_button(ctx, component, &cogs).await;
                                 }
                                 if component.data.custom_id.starts_with("poll_") {
                                     let db = ctx.data.read().await.get::<DbKey>().cloned();

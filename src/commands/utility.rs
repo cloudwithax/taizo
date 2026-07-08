@@ -1,106 +1,43 @@
-use crate::{Context, Error};
+use crate::{Context, Data, Error};
 use poise::serenity_prelude as serenity;
 use std::collections::HashMap;
 
-struct CogCommands {
-    name: String,
-    commands: Vec<(&'static str, &'static str)>,
+pub struct CogCommands {
+    pub name: String,
+    pub commands: Vec<(String, String)>,
 }
 
-fn all_cogs() -> Vec<CogCommands> {
-    vec![
-        CogCommands {
-            name: "utility".into(),
-            commands: vec![
-                ("/ping", "bot latency"),
-                ("/help", "show all commands"),
-                ("/serverinfo", "server info"),
-                ("/userinfo", "user info"),
-                ("/avatar", "member avatar"),
-                ("/whois", "detailed member info"),
-                ("/servericon", "server icon"),
-            ],
-        },
-        CogCommands {
-            name: "moderation".into(),
-            commands: vec![
-                ("/ban", "ban a user"),
-                ("/kick", "kick a user"),
-                ("/mute", "timeout a user"),
-                ("/unmute", "remove timeout"),
-                ("/warn", "warn a user"),
-                ("/warnings", "view warnings"),
-                ("/unban", "unban a user"),
-                ("/purge", "delete messages"),
-                ("/setwelcome", "set welcome message"),
-                ("/setleave", "set leave message"),
-            ],
-        },
-        CogCommands {
-            name: "fun".into(),
-            commands: vec![
-                ("/say", "bot says something"),
-                ("/choose", "pick from choices"),
-                ("/hug", "hug a member"),
-                ("/kiss", "kiss a member"),
-                ("/embed", "custom embed"),
-                ("/diceroll", "roll a die"),
-                ("/cookie", "cookie race"),
-                ("/poll", "create a poll"),
-                ("/yesno", "yes or no poll"),
-                ("/meme", "random meme"),
-                ("/dankmeme", "random dank meme"),
-                ("/programmerhumor", "programmer humor"),
-                ("/dadjoke", "random dad joke"),
-                ("/reddit", "random subreddit post"),
-                ("/eightball", "ask 8ball"),
-                ("/enlarge", "enlarge emoji"),
-                ("/dong", "measure dong"),
-                ("/toast", "give a toast"),
-                ("/owoify", "owo-ify text"),
-                ("/yn", "yes or no"),
-                ("/snipe", "deleted messages"),
-            ],
-        },
-        CogCommands {
-            name: "info".into(),
-            commands: vec![
-                ("/about", "bot info"),
-                ("/uptime", "bot uptime"),
-                ("/invite", "bot invite"),
-                ("/privacy", "privacy policy"),
-                ("/vote", "vote for bot"),
-                ("/support", "support server"),
-            ],
-        },
-        CogCommands {
-            name: "economy".into(),
-            commands: vec![
-                ("/openaccount", "create a bank account"),
-                ("/closeaccount", "delete your account"),
-                ("/balance", "check your balance"),
-                ("/work", "earn money"),
-                ("/slut", "risky work"),
-                ("/crime", "commit a crime"),
-                ("/daily", "daily bonus"),
-                ("/weekly", "weekly bonus"),
-                ("/deposit", "wallet → bank"),
-                ("/depositall", "deposit all"),
-                ("/withdraw", "bank → wallet"),
-                ("/withdrawall", "withdraw all"),
-                ("/pay", "send money"),
-                ("/coinflip", "bet on a coin flip"),
-                ("/highlow", "guess higher or lower"),
-                ("/leaderboard", "top 10 richest"),
-            ],
-        },
-    ]
+/// groups the framework's registered commands by their `category` for display in /help
+pub fn build_cogs(commands: &[poise::Command<Data, Error>]) -> Vec<CogCommands> {
+    let mut order: Vec<String> = Vec::new();
+    let mut map: HashMap<String, Vec<(String, String)>> = HashMap::new();
+
+    for cmd in commands {
+        if cmd.hide_in_help {
+            continue;
+        }
+        let category = cmd.category.clone().unwrap_or_else(|| "misc".to_string());
+        let description = cmd.description.clone().unwrap_or_default();
+        if !map.contains_key(&category) {
+            order.push(category.clone());
+        }
+        map.entry(category)
+            .or_default()
+            .push((format!("/{}", cmd.name), description));
+    }
+
+    order
+        .into_iter()
+        .map(|name| CogCommands {
+            commands: map.remove(&name).unwrap_or_default(),
+            name,
+        })
+        .collect()
 }
 
 const PER_PAGE: usize = 10;
 
-fn build_cog_buttons() -> Vec<serenity::CreateButton> {
-    let cogs = all_cogs();
+fn build_cog_buttons(cogs: &[CogCommands]) -> Vec<serenity::CreateButton> {
     cogs.iter()
         .map(|c| {
             serenity::CreateButton::new(format!("help_cog_{}", c.name))
@@ -110,11 +47,11 @@ fn build_cog_buttons() -> Vec<serenity::CreateButton> {
         .collect()
 }
 
-fn build_page_buttons(cog_idx: usize, page: usize, total_pages: usize) -> Vec<serenity::CreateActionRow> {
+fn build_page_buttons(cogs: &[CogCommands], cog_idx: usize, page: usize, total_pages: usize) -> Vec<serenity::CreateActionRow> {
     let mut rows = Vec::new();
 
     // Category buttons row
-    rows.push(serenity::CreateActionRow::Buttons(build_cog_buttons()));
+    rows.push(serenity::CreateActionRow::Buttons(build_cog_buttons(cogs)));
 
     // Pagination row (only if more than 1 page)
     if total_pages > 1 {
@@ -149,7 +86,7 @@ fn build_embed(cog: &CogCommands, page: usize) -> serenity::CreateEmbed {
     let slice = &cog.commands[start..end];
 
     let total_pages = (cog.commands.len() + PER_PAGE - 1) / PER_PAGE;
-    let total_commands: usize = all_cogs().iter().map(|c| c.commands.len()).sum();
+    let total_commands = cog.commands.len();
 
     let description: Vec<String> = slice
         .iter()
@@ -158,21 +95,27 @@ fn build_embed(cog: &CogCommands, page: usize) -> serenity::CreateEmbed {
 
     serenity::CreateEmbed::new()
         .title(format!("page {}/{} ({} commands)", page + 1, total_pages, total_commands))
-        .description(format!("**{} Commands**\n\n{}\n\n*use \";help command\" for more info on a command.*", cog.name, description.join("\n")))
+        .description(format!("**{} Commands**\n\n{}\n\n*use \"/help command\" for more info on a command.*", cog.name, description.join("\n")))
         .color(0xF28080)
 }
 
 /// show all commands
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "utility")]
 pub async fn help(ctx: Context<'_>) -> Result<(), Error> {
-    let cogs = all_cogs();
-    let first_cog = &cogs[0];
+    let cogs = build_cogs(&ctx.framework().options().commands);
+    let first_cog = match cogs.first() {
+        Some(cog) => cog,
+        None => {
+            ctx.say("no commands available").await?;
+            return Ok(());
+        }
+    };
     let total_pages = (first_cog.commands.len() + PER_PAGE - 1) / PER_PAGE;
 
     ctx.send(
         poise::CreateReply::default()
             .embed(build_embed(first_cog, 0))
-            .components(build_page_buttons(0, 0, total_pages)),
+            .components(build_page_buttons(&cogs, 0, 0, total_pages)),
     )
     .await?;
     Ok(())
@@ -181,10 +124,10 @@ pub async fn help(ctx: Context<'_>) -> Result<(), Error> {
 pub async fn handle_help_button(
     ctx: &serenity::Context,
     interaction: &serenity::ComponentInteraction,
+    cogs: &[CogCommands],
 ) -> Result<(), Error> {
     let custom_id = &interaction.data.custom_id;
 
-    let cogs = all_cogs();
     let mut cog_map: HashMap<String, usize> = HashMap::new();
     for (i, c) in cogs.iter().enumerate() {
         cog_map.insert(c.name.clone(), i);
@@ -206,7 +149,7 @@ pub async fn handle_help_button(
                     serenity::CreateInteractionResponse::UpdateMessage(
                         serenity::CreateInteractionResponseMessage::new()
                             .embed(build_embed(cog, 0))
-                            .components(build_page_buttons(cog_idx, 0, total_pages)),
+                            .components(build_page_buttons(cogs, cog_idx, 0, total_pages)),
                     ),
                 )
                 .await?;
@@ -229,7 +172,7 @@ pub async fn handle_help_button(
                     serenity::CreateInteractionResponse::UpdateMessage(
                         serenity::CreateInteractionResponseMessage::new()
                             .embed(build_embed(cog, new_page))
-                            .components(build_page_buttons(cog_idx, new_page, total_pages)),
+                            .components(build_page_buttons(cogs, cog_idx, new_page, total_pages)),
                     ),
                 )
                 .await?;
@@ -247,7 +190,7 @@ pub async fn handle_help_button(
                     serenity::CreateInteractionResponse::UpdateMessage(
                         serenity::CreateInteractionResponseMessage::new()
                             .embed(build_embed(cog, new_page))
-                            .components(build_page_buttons(cog_idx, new_page, total_pages)),
+                            .components(build_page_buttons(cogs, cog_idx, new_page, total_pages)),
                     ),
                 )
                 .await?;
@@ -262,7 +205,7 @@ fn extract_current_page(interaction: &serenity::ComponentInteraction) -> usize {
     let embeds = &interaction.message.embeds;
     if let Some(embed) = embeds.first() {
         if let Some(title) = &embed.title {
-            if let Some(page_str) = title.split("— page ").nth(1) {
+            if let Some(page_str) = title.strip_prefix("page ") {
                 if let Some(page_num) = page_str.split('/').next() {
                     if let Ok(p) = page_num.parse::<usize>() {
                         return p - 1;
@@ -275,7 +218,7 @@ fn extract_current_page(interaction: &serenity::ComponentInteraction) -> usize {
 }
 
 /// check the bot's latency
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "utility")]
 pub async fn ping(ctx: Context<'_>) -> Result<(), Error> {
     let latency = ctx.ping().await;
 
@@ -291,7 +234,7 @@ pub async fn ping(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// get information about the server
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "utility")]
 pub async fn serverinfo(ctx: Context<'_>) -> Result<(), Error> {
     use poise::serenity_prelude::Mentionable;
 
@@ -330,7 +273,7 @@ pub async fn serverinfo(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// get information about a user
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "utility")]
 pub async fn userinfo(
     ctx: Context<'_>,
     #[description = "user to get info about"] user: Option<serenity::User>,
@@ -355,7 +298,7 @@ pub async fn userinfo(
 }
 
 /// shows a member's avatar
-#[poise::command(slash_command, aliases("av"))]
+#[poise::command(slash_command, category = "utility", aliases("av"))]
 pub async fn avatar(
     ctx: Context<'_>,
     #[description = "member to get avatar of"] member: Option<serenity::Member>,
@@ -383,7 +326,7 @@ pub async fn avatar(
 }
 
 /// shows useful info about a member
-#[poise::command(slash_command, aliases("ui"))]
+#[poise::command(slash_command, category = "utility", aliases("ui"))]
 pub async fn whois(
     ctx: Context<'_>,
     #[description = "member to get info about"] member: Option<serenity::Member>,
@@ -461,7 +404,7 @@ pub async fn whois(
 }
 
 /// sends the server's icon
-#[poise::command(slash_command, aliases("svi"))]
+#[poise::command(slash_command, category = "utility", aliases("svi"))]
 pub async fn servericon(ctx: Context<'_>) -> Result<(), Error> {
     let icon = {
         let guild = ctx.guild().ok_or("must be used in a guild")?;

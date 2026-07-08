@@ -5,6 +5,7 @@ use serenity::Mentionable;
 /// manage the audit log system
 #[poise::command(
     slash_command,
+    category = "auditlog",
     required_permissions = "MANAGE_GUILD",
     subcommands("setup", "config", "disable", "test")
 )]

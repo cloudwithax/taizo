@@ -4,7 +4,7 @@ use poise::serenity_prelude::Mentionable;
 use rand::seq::SliceRandom;
 
 /// ban a member from the server
-#[poise::command(slash_command, required_permissions = "BAN_MEMBERS")]
+#[poise::command(slash_command, category = "moderation", required_permissions = "BAN_MEMBERS")]
 pub async fn ban(
     ctx: Context<'_>,
     #[description = "user to ban"] user: serenity::Member,
@@ -27,7 +27,7 @@ pub async fn ban(
 }
 
 /// kick a member from the server
-#[poise::command(slash_command, required_permissions = "KICK_MEMBERS")]
+#[poise::command(slash_command, category = "moderation", required_permissions = "KICK_MEMBERS")]
 pub async fn kick(
     ctx: Context<'_>,
     #[description = "user to kick"] user: serenity::Member,
@@ -50,7 +50,7 @@ pub async fn kick(
 }
 
 /// mute a member (timeout)
-#[poise::command(slash_command, required_permissions = "MODERATE_MEMBERS")]
+#[poise::command(slash_command, category = "moderation", required_permissions = "MODERATE_MEMBERS")]
 pub async fn mute(
     ctx: Context<'_>,
     #[description = "user to mute"] mut user: serenity::Member,
@@ -91,7 +91,7 @@ pub async fn mute(
 }
 
 /// unmute a member (remove timeout)
-#[poise::command(slash_command, required_permissions = "MODERATE_MEMBERS")]
+#[poise::command(slash_command, category = "moderation", required_permissions = "MODERATE_MEMBERS")]
 pub async fn unmute(
     ctx: Context<'_>,
     #[description = "user to unmute"] mut user: serenity::Member,
@@ -116,7 +116,7 @@ pub async fn unmute(
 }
 
 /// warn a member (stored in database)
-#[poise::command(slash_command, required_permissions = "MODERATE_MEMBERS")]
+#[poise::command(slash_command, category = "moderation", required_permissions = "MODERATE_MEMBERS")]
 pub async fn warn(
     ctx: Context<'_>,
     #[description = "user to warn"] user: serenity::Member,
@@ -184,7 +184,7 @@ pub async fn warn(
 }
 
 /// view warnings for a user
-#[poise::command(slash_command, required_permissions = "MODERATE_MEMBERS")]
+#[poise::command(slash_command, category = "moderation", required_permissions = "MODERATE_MEMBERS")]
 pub async fn warnings(
     ctx: Context<'_>,
     #[description = "user to check"] user: Option<serenity::Member>,
@@ -240,7 +240,7 @@ pub async fn warnings(
 }
 
 /// unban a member using their user id
-#[poise::command(slash_command, required_permissions = "BAN_MEMBERS")]
+#[poise::command(slash_command, category = "moderation", required_permissions = "BAN_MEMBERS")]
 pub async fn unban(
     ctx: Context<'_>,
     #[description = "user id to unban"] user_id: u64,
@@ -275,7 +275,7 @@ pub async fn unban(
 }
 
 /// deletes messages from a channel (5-100)
-#[poise::command(slash_command, required_permissions = "MANAGE_MESSAGES")]
+#[poise::command(slash_command, category = "moderation", required_permissions = "MANAGE_MESSAGES")]
 pub async fn purge(
     ctx: Context<'_>,
     #[description = "number of messages to delete (5-100)"] amount: Option<u64>,
@@ -329,7 +329,7 @@ pub async fn purge(
 }
 
 /// set the welcome message for this server
-#[poise::command(slash_command, required_permissions = "MANAGE_GUILD")]
+#[poise::command(slash_command, category = "moderation", required_permissions = "MANAGE_GUILD")]
 pub async fn setwelcome(
     ctx: Context<'_>,
     #[description = "channel to send welcome messages"] channel: serenity::Channel,
@@ -359,7 +359,7 @@ pub async fn setwelcome(
 }
 
 /// set the leave message for this server
-#[poise::command(slash_command, required_permissions = "MANAGE_GUILD")]
+#[poise::command(slash_command, category = "moderation", required_permissions = "MANAGE_GUILD")]
 pub async fn setleave(
     ctx: Context<'_>,
     #[description = "channel to send leave messages"] channel: serenity::Channel,
@@ -406,7 +406,7 @@ fn random_honeypot_name(existing: &[String]) -> String {
 }
 
 /// manage honeypot channels (auto-bans anyone who chats in them)
-#[poise::command(slash_command, required_permissions = "MANAGE_GUILD", subcommands("create", "remove", "toggle"))]
+#[poise::command(slash_command, category = "moderation", required_permissions = "MANAGE_GUILD", subcommands("create", "remove", "toggle"))]
 pub async fn honeypot(ctx: Context<'_>) -> Result<(), Error> {
     ctx.say("use a subcommand: `create`, `remove`, or `toggle`").await?;
     Ok(())

@@ -169,6 +169,7 @@ fn build_setup_embed(state: &SetupState) -> serenity::CreateEmbed {
 /// manage reaction roles (create, remove, list)
 #[poise::command(
     slash_command,
+    category = "reactionrole",
     required_permissions = "MANAGE_ROLES",
     subcommands("rr_create", "rr_remove", "rr_list")
 )]

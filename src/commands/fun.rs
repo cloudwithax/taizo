@@ -52,7 +52,7 @@ pub async fn on_message_delete(
 }
 
 /// makes the bot say a message
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "fun")]
 pub async fn say(
     ctx: Context<'_>,
     #[description = "message to say"] message: String,
@@ -76,7 +76,7 @@ pub async fn say(
 }
 
 /// make the bot choose between options (separate with |)
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "fun")]
 pub async fn choose(
     ctx: Context<'_>,
     #[description = "choices separated by |"] choices: String,
@@ -121,7 +121,7 @@ pub async fn choose(
 }
 
 /// hugs a member
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "fun")]
 pub async fn hug(
     ctx: Context<'_>,
     #[description = "member to hug"] member: serenity::Member,
@@ -158,7 +158,7 @@ pub async fn hug(
 }
 
 /// kisses a member
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "fun")]
 pub async fn kiss(
     ctx: Context<'_>,
     #[description = "member to kiss"] member: serenity::Member,
@@ -197,7 +197,7 @@ pub async fn kiss(
 }
 
 /// sends a custom embed with your message
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "fun")]
 pub async fn embed(
     ctx: Context<'_>,
     #[description = "message for the embed"] msg: String,
@@ -218,7 +218,7 @@ pub async fn embed(
 }
 
 /// rolls a six-sided die
-#[poise::command(slash_command, aliases("roll"))]
+#[poise::command(slash_command, category = "fun", aliases("roll"))]
 pub async fn diceroll(ctx: Context<'_>) -> Result<(), Error> {
     let dice = rand::random::<u64>() % 6 + 1;
     ctx.send(
@@ -233,7 +233,7 @@ pub async fn diceroll(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// see who eats the cookie first in a race against the clock
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "fun")]
 pub async fn cookie(ctx: Context<'_>) -> Result<(), Error> {
     use poise::serenity_prelude::Mentionable;
 
@@ -392,7 +392,7 @@ fn parse_duration(input: &str) -> Option<std::time::Duration> {
     if total < 60 { None } else { Some(std::time::Duration::from_secs(total)) }
 }
 
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "fun")]
 pub async fn poll(
     ctx: Context<'_>,
     #[description = "title | choice1 | choice2 ..."] choices: String,
@@ -566,7 +566,7 @@ pub async fn poll(
 }
 
 /// create a yes or no poll
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "fun")]
 pub async fn yesno(
     ctx: Context<'_>,
     #[description = "title for the poll"] title: String,
@@ -769,7 +769,7 @@ async fn fetch_meme(subreddit: &str) -> Result<serde_json::Value, reqwest::Error
 }
 
 /// fetches a random meme from r/memes
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "fun")]
 pub async fn meme(ctx: Context<'_>) -> Result<(), Error> {
     let res = match fetch_meme("memes").await {
         Ok(r) => r,
@@ -806,7 +806,7 @@ pub async fn meme(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// fetches a random dank meme from r/dankmemes
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "fun")]
 pub async fn dankmeme(ctx: Context<'_>) -> Result<(), Error> {
     let res = match fetch_meme("dankmemes").await {
         Ok(r) => r,
@@ -843,7 +843,7 @@ pub async fn dankmeme(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// fetches a random post from r/ProgrammerHumor
-#[poise::command(slash_command, aliases("ph"))]
+#[poise::command(slash_command, category = "fun", aliases("ph"))]
 pub async fn programmerhumor(ctx: Context<'_>) -> Result<(), Error> {
     let res = match fetch_meme("ProgrammerHumor").await {
         Ok(r) => r,
@@ -880,7 +880,7 @@ pub async fn programmerhumor(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// tells you a random dad joke
-#[poise::command(slash_command, aliases("djoke"))]
+#[poise::command(slash_command, category = "fun", aliases("djoke"))]
 pub async fn dadjoke(ctx: Context<'_>) -> Result<(), Error> {
     let client = reqwest::Client::new();
     let res = client
@@ -906,7 +906,7 @@ pub async fn dadjoke(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// fetches a random post from a subreddit
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "fun")]
 pub async fn reddit(
     ctx: Context<'_>,
     #[description = "subreddit name"] subreddit: String,
@@ -985,7 +985,7 @@ pub async fn reddit(
 }
 
 /// ask the magical 8ball a question
-#[poise::command(slash_command, aliases("8ball"))]
+#[poise::command(slash_command, category = "fun", aliases("8ball"))]
 pub async fn eightball(
     ctx: Context<'_>,
     #[description = "question to ask"] message: String,
@@ -1040,7 +1040,7 @@ pub async fn eightball(
 }
 
 /// sends the original link to a custom emoji
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "fun")]
 pub async fn enlarge(
     ctx: Context<'_>,
     #[description = "emoji to enlarge"] emoji: serenity::Emoji,
@@ -1059,7 +1059,7 @@ pub async fn enlarge(
 }
 
 /// measures your dong size
-#[poise::command(slash_command, aliases("pp"))]
+#[poise::command(slash_command, category = "fun", aliases("pp"))]
 pub async fn dong(
     ctx: Context<'_>,
     #[description = "member to measure"] member: Option<serenity::Member>,
@@ -1103,7 +1103,7 @@ pub async fn dong(
 }
 
 /// make the bot toast you with a compliment
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "fun")]
 pub async fn toast(
     ctx: Context<'_>,
     #[description = "member to toast"] member: Option<serenity::Member>,
@@ -1175,7 +1175,7 @@ pub async fn toast(
 }
 
 /// OWO-ify some text
-#[poise::command(slash_command, aliases("owo"))]
+#[poise::command(slash_command, category = "fun", aliases("owo"))]
 pub async fn owoify(
     ctx: Context<'_>,
     #[description = "text to owoify"] text: String,
@@ -1196,7 +1196,7 @@ pub async fn owoify(
 }
 
 /// ask taizo a yes or no question
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "fun")]
 pub async fn yn(
     ctx: Context<'_>,
     #[description = "question to ask"] question: String,
@@ -1218,7 +1218,7 @@ pub async fn yn(
 }
 
 /// shows a recently deleted message
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "fun")]
 pub async fn snipe(ctx: Context<'_>) -> Result<(), Error> {
     let guild_id = ctx.guild_id().ok_or("must be used in a guild")?.get();
     let cache = SNIPE_CACHE.read().await;

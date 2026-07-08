@@ -48,7 +48,7 @@ async fn remove_money(db: &sqlx::PgPool, user_id: u64, amount: i64) -> Result<()
 }
 
 /// opens a bank account for you to use
-#[poise::command(slash_command, aliases("oacc"))]
+#[poise::command(slash_command, category = "economy", aliases("oacc"))]
 pub async fn openaccount(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.get();
     let exists = ensure_account(&ctx.data().db, user_id).await?;
@@ -82,7 +82,7 @@ pub async fn openaccount(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// closes your bank account
-#[poise::command(slash_command, aliases("cacc"))]
+#[poise::command(slash_command, category = "economy", aliases("cacc"))]
 pub async fn closeaccount(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.get();
     let exists = ensure_account(&ctx.data().db, user_id).await?;
@@ -116,7 +116,7 @@ pub async fn closeaccount(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// check your balance
-#[poise::command(slash_command, aliases("bal"))]
+#[poise::command(slash_command, category = "economy", aliases("bal"))]
 pub async fn balance(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.get();
     let exists = ensure_account(&ctx.data().db, user_id).await?;
@@ -149,7 +149,7 @@ pub async fn balance(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// work and receive a random amount of money
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "economy")]
 pub async fn work(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.get();
     let exists = ensure_account(&ctx.data().db, user_id).await?;
@@ -191,7 +191,7 @@ pub async fn work(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// work as a slut and receive or lose a random amount of money
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "economy")]
 pub async fn slut(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.get();
     let exists = ensure_account(&ctx.data().db, user_id).await?;
@@ -256,7 +256,7 @@ pub async fn slut(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// commit a crime and receive or lose a random amount of money
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "economy")]
 pub async fn crime(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.get();
     let exists = ensure_account(&ctx.data().db, user_id).await?;
@@ -323,7 +323,7 @@ pub async fn crime(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// get a daily bonus of $500
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "economy")]
 pub async fn daily(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.get();
     let exists = ensure_account(&ctx.data().db, user_id).await?;
@@ -355,7 +355,7 @@ pub async fn daily(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// get a weekly bonus of $5,000
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "economy")]
 pub async fn weekly(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.get();
     let exists = ensure_account(&ctx.data().db, user_id).await?;
@@ -387,7 +387,7 @@ pub async fn weekly(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// deposit money from your wallet to your bank
-#[poise::command(slash_command, aliases("dep"))]
+#[poise::command(slash_command, category = "economy", aliases("dep"))]
 pub async fn deposit(
     ctx: Context<'_>,
     #[description = "amount to deposit"] amount: i64,
@@ -452,7 +452,7 @@ pub async fn deposit(
 }
 
 /// deposit all money from your wallet to your bank
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "economy")]
 pub async fn depositall(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.get();
     let exists = ensure_account(&ctx.data().db, user_id).await?;
@@ -502,7 +502,7 @@ pub async fn depositall(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// withdraw money from your bank to your wallet
-#[poise::command(slash_command, aliases("with"))]
+#[poise::command(slash_command, category = "economy", aliases("with"))]
 pub async fn withdraw(
     ctx: Context<'_>,
     #[description = "amount to withdraw"] amount: i64,
@@ -567,7 +567,7 @@ pub async fn withdraw(
 }
 
 /// withdraw all money from your bank to your wallet
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "economy")]
 pub async fn withdrawall(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.get();
     let exists = ensure_account(&ctx.data().db, user_id).await?;
@@ -617,7 +617,7 @@ pub async fn withdrawall(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// pay someone using your wallet's balance
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "economy")]
 pub async fn pay(
     ctx: Context<'_>,
     #[description = "user to pay"] user: serenity::Member,
@@ -714,7 +714,7 @@ pub async fn pay(
 }
 
 /// flip a coin and land on your side to win 2x the betted amount
-#[poise::command(slash_command, aliases("flip"))]
+#[poise::command(slash_command, category = "economy", aliases("flip"))]
 pub async fn coinflip(
     ctx: Context<'_>,
     #[description = "amount to bet"] amount: i64,
@@ -814,7 +814,7 @@ pub async fn coinflip(
 }
 
 /// guess if the missing number will be higher or lower and win double or lose
-#[poise::command(slash_command, aliases("hilo", "highlo", "hilow"))]
+#[poise::command(slash_command, category = "economy", aliases("hilo", "highlo", "hilow"))]
 pub async fn highlow(
     ctx: Context<'_>,
     #[description = "amount to bet"] amount: i64,
@@ -968,7 +968,7 @@ pub async fn highlow(
 }
 
 /// play a hand of blackjack
-#[poise::command(slash_command, aliases("bj"))]
+#[poise::command(slash_command, category = "economy", aliases("bj"))]
 pub async fn blackjack(
     ctx: Context<'_>,
     #[description = "amount to bet"] mut bet: i64,
@@ -1308,7 +1308,7 @@ pub async fn blackjack(
 }
 
 /// shows the global money leaderboard
-#[poise::command(slash_command, aliases("lboard", "lb"))]
+#[poise::command(slash_command, category = "economy", aliases("lboard", "lb"))]
 pub async fn leaderboard(ctx: Context<'_>) -> Result<(), Error> {
     let rows = sqlx::query_as::<_, (i64, i64)>("SELECT user_id, worth FROM economy WHERE worth > 0 ORDER BY worth DESC LIMIT 10")
         .fetch_all(&ctx.data().db)

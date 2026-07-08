@@ -5,6 +5,7 @@ use serenity::Mentionable;
 /// manage the ticket system
 #[poise::command(
     slash_command,
+    category = "ticket",
     required_permissions = "MANAGE_GUILD",
     subcommands("setup", "config", "setarchivecategory", "close", "add", "remove", "archive", "delete", "transcript")
 )]

@@ -2,7 +2,7 @@ use crate::{Context, Error};
 use poise::serenity_prelude as serenity;
 
 /// shows more info about the bot
-#[poise::command(slash_command, aliases("ab"))]
+#[poise::command(slash_command, category = "info", aliases("ab"))]
 pub async fn about(ctx: Context<'_>) -> Result<(), Error> {
     let data = ctx.data();
     let uptime = data._start_time.elapsed();
@@ -28,7 +28,7 @@ pub async fn about(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// shows how long the bot has been up
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "info")]
 pub async fn uptime(ctx: Context<'_>) -> Result<(), Error> {
     let data = ctx.data();
     let uptime = data._start_time.elapsed();
@@ -46,7 +46,7 @@ pub async fn uptime(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// sends the bot's invite link
-#[poise::command(slash_command, aliases("inv"))]
+#[poise::command(slash_command, category = "info", aliases("inv"))]
 pub async fn invite(ctx: Context<'_>) -> Result<(), Error> {
     ctx.send(
         poise::CreateReply::default().embed(
@@ -61,7 +61,7 @@ pub async fn invite(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// sends the bot's privacy policy
-#[poise::command(slash_command, aliases("priv"))]
+#[poise::command(slash_command, category = "info", aliases("priv"))]
 pub async fn privacy(ctx: Context<'_>) -> Result<(), Error> {
     ctx.send(
         poise::CreateReply::default().embed(
@@ -76,7 +76,7 @@ pub async fn privacy(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// vote for taizo
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "info")]
 pub async fn vote(ctx: Context<'_>) -> Result<(), Error> {
     ctx.send(
         poise::CreateReply::default().embed(
@@ -91,7 +91,7 @@ pub async fn vote(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// join the support server
-#[poise::command(slash_command)]
+#[poise::command(slash_command, category = "info")]
 pub async fn support(ctx: Context<'_>) -> Result<(), Error> {
     ctx.send(
         poise::CreateReply::default().embed(
