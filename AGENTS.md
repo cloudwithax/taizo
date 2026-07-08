@@ -23,8 +23,19 @@ cargo run
 - Use `cargo clippy && cargo check && cargo build` to verify changes
 - Note any pitfalls you experienced in the library/modules in AGENTS.md
 - Commit changes
-- Push changes to feature branch 
-- Merges to main will happen at the developers discretion
+- Push changes to main
+- After pushing, restart the service: `sudo systemctl restart taizo.service` (or use `/restart` in Discord — owner only)
+
+## Service
+
+Runs as a systemd service (`taizo.service`). Owner-only Discord commands `/restart` and `/stop` control it.
+
+```bash
+sudo systemctl status taizo.service    # check status
+sudo systemctl restart taizo.service   # restart
+sudo systemctl stop taizo.service      # stop
+sudo journalctl -u taizo.service -f    # tail logs
+```
 
 
 ## Schema
@@ -33,7 +44,7 @@ cargo run
 
 ## Environment
 
-Requires `.env` with `TOKEN` and `DATABASE_URL` (loaded by dotenvy).
+Requires `.env` with `TOKEN`, `DATABASE_URL`, and `OWNER_ID` (loaded by dotenvy).
 
 ## Commands
 
@@ -42,6 +53,7 @@ Register in `main.rs` under `framework.options().commands`. Each module lives in
 - `fun.rs` — say, choose, hug, kiss, embed, poll, snipe, reddit, owoify, etc.
 - `info.rs` — about, uptime, invite, privacy, vote, support
 - `moderation.rs` — ban, kick, mute, warn, purge, setwelcome/setleave
+- `owner.rs` — restart, stop (owner only)
 - `utility.rs` — help (paginated buttons), ping, serverinfo, userinfo, avatar, whois
 
 ## Conventions
