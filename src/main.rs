@@ -336,17 +336,21 @@ async fn main() {
                                 commands::auditlog::log_event(&ctx.http, &db, gid, "channels", embed).await;
                             }
                         }
-                        serenity::FullEvent::VoiceStateUpdate { old: _, new } => {
+                        serenity::FullEvent::VoiceStateUpdate { old, new } => {
                             if let Some(db) = ctx.data.read().await.get::<DbKey>().cloned() {
                                 if let Some(gid) = new.guild_id {
                                     let user_id = new.user_id;
-                                    let channel_name = new.channel_id
-                                        .map(|cid| format!("<#{}>", cid))
-                                        .unwrap_or_else(|| "unknown".to_string());
-                                    let action = if new.channel_id.is_some() {
-                                        "joined voice"
+                                    let (action, channel_name) = if new.channel_id.is_some() {
+                                        let ch = new.channel_id
+                                            .map(|cid| format!("<#{}>", cid))
+                                            .unwrap_or_else(|| "unknown".to_string());
+                                        ("joined voice", ch)
                                     } else {
-                                        "left voice"
+                                        let ch = old.as_ref()
+                                            .and_then(|o| o.channel_id)
+                                            .map(|cid| format!("<#{}>", cid))
+                                            .unwrap_or_else(|| "unknown".to_string());
+                                        ("left voice", ch)
                                     };
                                     let embed = serenity::CreateEmbed::new()
                                         .title("voice state update")

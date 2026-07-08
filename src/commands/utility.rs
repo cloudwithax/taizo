@@ -50,8 +50,10 @@ fn build_cog_buttons(cogs: &[CogCommands]) -> Vec<serenity::CreateButton> {
 fn build_page_buttons(cogs: &[CogCommands], cog_idx: usize, page: usize, total_pages: usize) -> Vec<serenity::CreateActionRow> {
     let mut rows = Vec::new();
 
-    // Category buttons row
-    rows.push(serenity::CreateActionRow::Buttons(build_cog_buttons(cogs)));
+    // Category buttons row (chunk into rows of 5)
+    for chunk in build_cog_buttons(cogs).chunks(5) {
+        rows.push(serenity::CreateActionRow::Buttons(chunk.to_vec()));
+    }
 
     // Pagination row (only if more than 1 page)
     if total_pages > 1 {
