@@ -115,6 +115,8 @@ async fn main() {
                 commands::reactionrole::reactionrole(),
                 commands::ticket::ticket(),
                 commands::auditlog::auditlog(),
+                commands::owner::restart(),
+                commands::owner::stop(),
             ],
             on_error: |error| {
                 Box::pin(async move {

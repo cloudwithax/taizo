@@ -1,0 +1,15 @@
+[Unit]
+Description=taizo discord bot
+After=network.target
+
+[Service]
+Type=simple
+User=clxud
+WorkingDirectory=/home/clxud/taizo
+EnvironmentFile=/home/clxud/taizo/.env
+ExecStart=/home/clxud/.cargo/bin/cargo run --release
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
