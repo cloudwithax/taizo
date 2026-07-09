@@ -121,11 +121,28 @@ async fn main() {
             ],
             on_error: |error| {
                 Box::pin(async move {
-                    if let poise::FrameworkError::Command { error, ctx, .. } = error {
-                        error!("Command error: {:?}", error);
-                        let _ = ctx
-                            .say(format!("command failed: {:?}", error))
-                            .await;
+                    match &error {
+                        poise::FrameworkError::Command { error, ctx, .. } => {
+                            error!("Command error: {:?}", error);
+                            let _ = ctx
+                                .say(format!("command failed: {:?}", error))
+                                .await;
+                        }
+                        poise::FrameworkError::MissingBotPermissions { missing_permissions, ctx, .. } => {
+                            error!("Missing bot permissions: {:?}", missing_permissions);
+                            let _ = ctx
+                                .say(format!("bot missing permissions: {}", missing_permissions))
+                                .await;
+                        }
+                        poise::FrameworkError::MissingUserPermissions { missing_permissions, ctx, .. } => {
+                            error!("Missing user permissions: {:?}", missing_permissions);
+                            let _ = ctx
+                                .say("you don't have permission to use this command")
+                                .await;
+                        }
+                        other => {
+                            error!("Unhandled framework error: {}", other);
+                        }
                     }
                 })
             },
