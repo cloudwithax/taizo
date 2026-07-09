@@ -11,7 +11,7 @@ use crate::{Context, Error};
 )]
 pub async fn steal(
     ctx: Context<'_>,
-    #[description = "emoji to steal"] emoji: serenity::Emoji,
+    #[description = "emoji to steal (paste the emoji)"] emoji: String,
     #[description = "name for the emoji (optional)"] name: Option<String>,
 ) -> Result<(), Error> {
     let guild_id = match ctx.guild_id() {
@@ -22,10 +22,15 @@ pub async fn steal(
         }
     };
 
-    let final_name = match name {
-        Some(n) => n,
-        None => emoji.name.clone(),
+    let (emoji_name, emoji_id, animated) = match parse_emoji(&emoji) {
+        Some(v) => v,
+        None => {
+            ctx.say("couldn't parse that emoji. make sure you paste a custom emoji.").await?;
+            return Ok(());
+        }
     };
+
+    let final_name = name.unwrap_or(emoji_name);
 
     let existing = match guild_id.emojis(&ctx).await {
         Ok(e) => e,
@@ -48,7 +53,9 @@ pub async fn steal(
         final_name
     };
 
-    let image_url = emoji.url();
+    let extension = if animated { "gif" } else { "png" };
+    let image_url = format!("https://cdn.discordapp.com/emojis/{}.{}", emoji_id, extension);
+
     let response = match reqwest::get(&image_url).await {
         Ok(r) => match r.bytes().await {
             Ok(b) => b,
@@ -65,7 +72,7 @@ pub async fn steal(
         }
     };
 
-    let mime = if emoji.animated { "image/gif" } else { "image/png" };
+    let mime = if animated { "image/gif" } else { "image/png" };
     let b64 = format!(
         "data:{};base64,{}",
         mime,
@@ -85,11 +92,28 @@ pub async fn steal(
         poise::CreateReply::default().embed(
             serenity::CreateEmbed::new()
                 .title("emoji stolen")
-                .description(format!("added {} as {}", emoji, new_emoji))
+                .description(format!("added {} as {}", new_emoji, new_emoji))
                 .color(0x80F291),
         ),
     )
     .await?;
 
     Ok(())
+}
+
+fn parse_emoji(input: &str) -> Option<(String, u64, bool)> {
+    let input = input.trim();
+    if input.starts_with("<a:") {
+        let inner = &input[3..input.len().saturating_sub(1)];
+        let (name, id_str) = inner.rsplit_once(':')?;
+        let id = id_str.parse().ok()?;
+        Some((name.to_string(), id, true))
+    } else if input.starts_with("<:") {
+        let inner = &input[2..input.len().saturating_sub(1)];
+        let (name, id_str) = inner.rsplit_once(':')?;
+        let id = id_str.parse().ok()?;
+        Some((name.to_string(), id, false))
+    } else {
+        None
+    }
 }

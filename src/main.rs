@@ -140,6 +140,12 @@ async fn main() {
                                 .say("you don't have permission to use this command")
                                 .await;
                         }
+                        poise::FrameworkError::ArgumentParse { error, input, ctx, .. } => {
+                            error!("Argument parse error: {:?}, input: {:?}", error, input);
+                            let _ = ctx
+                                .say(format!("couldn't parse argument: {}", error))
+                                .await;
+                        }
                         other => {
                             error!("Unhandled framework error: {}", other);
                         }
