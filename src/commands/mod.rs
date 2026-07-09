@@ -1,5 +1,6 @@
 pub mod auditlog;
 pub mod economy;
+pub mod emoji;
 pub mod fun;
 pub mod info;
 pub mod moderation;

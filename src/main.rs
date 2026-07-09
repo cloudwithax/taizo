@@ -117,6 +117,7 @@ async fn main() {
                 commands::auditlog::auditlog(),
                 commands::owner::restart(),
                 commands::owner::stop(),
+                commands::emoji::steal(),
             ],
             on_error: |error| {
                 Box::pin(async move {
