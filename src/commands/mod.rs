@@ -6,5 +6,6 @@ pub mod info;
 pub mod moderation;
 pub mod owner;
 pub mod reactionrole;
+pub mod starboard;
 pub mod ticket;
 pub mod utility;

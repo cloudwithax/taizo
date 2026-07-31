@@ -114,6 +114,23 @@ CREATE TABLE IF NOT EXISTS audit_log_config (
     log_voice BOOLEAN NOT NULL DEFAULT true
 );
 
+-- starboard config per guild
+CREATE TABLE IF NOT EXISTS starboard_config (
+    guild_id BIGINT PRIMARY KEY,
+    channel_id BIGINT NOT NULL,
+    emoji TEXT NOT NULL DEFAULT '⭐',
+    threshold INT NOT NULL DEFAULT 5
+);
+
+-- starred messages tracking
+CREATE TABLE IF NOT EXISTS starboard_messages (
+    message_id BIGINT PRIMARY KEY,
+    guild_id BIGINT NOT NULL,
+    channel_id BIGINT NOT NULL,
+    starboard_msg_id BIGINT NOT NULL,
+    star_count INT NOT NULL DEFAULT 0
+);
+
 -- track user role assignments (for unique, limit, temp, verify modes)
 CREATE TABLE IF NOT EXISTS reaction_role_users (
     id SERIAL PRIMARY KEY,
@@ -123,4 +140,21 @@ CREATE TABLE IF NOT EXISTS reaction_role_users (
     assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMPTZ,
     UNIQUE(message_id, user_id, role_id)
+);
+
+-- starboard configuration per guild
+CREATE TABLE IF NOT EXISTS starboard_config (
+    guild_id BIGINT PRIMARY KEY,
+    channel_id BIGINT NOT NULL,
+    threshold INT NOT NULL DEFAULT 5,
+    emoji TEXT NOT NULL DEFAULT '⭐'
+);
+
+-- track starred messages on the starboard
+CREATE TABLE IF NOT EXISTS starboard_messages (
+    message_id BIGINT PRIMARY KEY,
+    guild_id BIGINT NOT NULL,
+    channel_id BIGINT NOT NULL,
+    starboard_msg_id BIGINT NOT NULL,
+    star_count INT NOT NULL DEFAULT 0
 );

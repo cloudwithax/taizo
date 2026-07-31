@@ -118,6 +118,7 @@ async fn main() {
                 commands::owner::restart(),
                 commands::owner::stop(),
                 commands::emoji::steal(),
+                commands::starboard::starboard(),
             ],
             on_error: |error| {
                 Box::pin(async move {
@@ -188,11 +189,13 @@ async fn main() {
                         serenity::FullEvent::ReactionAdd { add_reaction } => {
                             if let Some(db) = ctx.data.read().await.get::<DbKey>().cloned() {
                                 commands::reactionrole::handle_reaction_add(ctx, add_reaction, &db).await;
+                                commands::starboard::handle_reaction(ctx, add_reaction, &db).await;
                             }
                         }
                         serenity::FullEvent::ReactionRemove { removed_reaction } => {
                             if let Some(db) = ctx.data.read().await.get::<DbKey>().cloned() {
                                 commands::reactionrole::handle_reaction_remove(ctx, removed_reaction, &db).await;
+                                commands::starboard::handle_reaction(ctx, removed_reaction, &db).await;
                             }
                         }
                         serenity::FullEvent::MessageUpdate { old_if_available, new, .. } => {
