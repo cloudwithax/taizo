@@ -1,0 +1,1379 @@
+use crate::{Context, Error};
+use poise::serenity_prelude as serenity;
+use serde::Deserialize;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+const NOVITA_BASE_URL: &str = "https://api.novita.ai/openai/v1/chat/completions";
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct OmnimodConfig {
+    pub guild_id: i64,
+    pub enabled: bool,
+    pub pre_stage_threshold: f64,
+    pub stage1_model: String,
+    pub stage2_model: String,
+    pub stage1_confidence_threshold: f64,
+    pub stage2_confidence_threshold: f64,
+    pub log_channel_id: Option<i64>,
+}
+
+impl OmnimodConfig {
+    pub fn default(guild_id: i64) -> Self {
+        OmnimodConfig {
+            guild_id,
+            enabled: false,
+            pre_stage_threshold: 0.5,
+            stage1_model: "meta-llama/llama-3.1-8b-instruct".to_string(),
+            stage2_model: "deepseek/deepseek-v4-flash-0731".to_string(),
+            stage1_confidence_threshold: 0.5,
+            stage2_confidence_threshold: 0.75,
+            log_channel_id: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PreStageResult {
+    pub flagged: bool,
+    pub score: f64,
+    pub matches: Vec<PatternMatch>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PatternMatch {
+    pub category: String,
+    pub weight: f64,
+    pub matched: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct StageResult {
+    pub label: String,
+    pub confidence: f64,
+    pub category: String,
+    pub target: String,
+    pub reason: String,
+}
+
+struct KeywordEntry {
+    keyword: String,
+    category: String,
+    weight: f64,
+}
+
+struct RegexEntry {
+    pattern: regex::Regex,
+    category: String,
+    weight: f64,
+}
+
+struct OmnimodState {
+    keywords: Vec<KeywordEntry>,
+    automaton: aho_corasick::AhoCorasick,
+    regex_patterns: Vec<RegexEntry>,
+}
+
+fn get_keywords() -> Vec<KeywordEntry> {
+    vec![
+        KeywordEntry { keyword: "kill myself".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "end my life".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "end it".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "not worth it".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "better off dead".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "wish i was dead".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "no one cares".to_string(), category: "self_harm_risk".to_string(), weight: 1.0 },
+        KeywordEntry { keyword: "everyone would be better off".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "i am a burden".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "burden to everyone".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "final goodbye".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "see you on the other side".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "giving up".to_string(), category: "self_harm_risk".to_string(), weight: 1.0 },
+        KeywordEntry { keyword: "can't go on".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "over and out".to_string(), category: "self_harm_risk".to_string(), weight: 1.0 },
+        KeywordEntry { keyword: "done with life".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "don't have a reason".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "i'll be gone".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "you won't have to worry".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "i won't be a problem".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "i'll take care of it".to_string(), category: "self_harm_risk".to_string(), weight: 1.0 },
+        KeywordEntry { keyword: "how many pills".to_string(), category: "supplying_method".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "lethal dose".to_string(), category: "supplying_method".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "how much to".to_string(), category: "supplying_method".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "deadly amount".to_string(), category: "supplying_method".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "method to".to_string(), category: "supplying_method".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "step by step".to_string(), category: "supplying_method".to_string(), weight: 1.0 },
+        KeywordEntry { keyword: "i will kill you".to_string(), category: "threat".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "i'm going to find you".to_string(), category: "threat".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "i know where you live".to_string(), category: "threat".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "i know your address".to_string(), category: "threat".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "i'll find you".to_string(), category: "threat".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "you should die".to_string(), category: "encouraging_self_harm".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "just die".to_string(), category: "encouraging_self_harm".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "kill yourself".to_string(), category: "encouraging_self_harm".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "why don't you die".to_string(), category: "encouraging_self_harm".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "you'd be better off dead".to_string(), category: "encouraging_self_harm".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "everyone dies".to_string(), category: "encouraging_self_harm".to_string(), weight: 1.0 },
+        KeywordEntry { keyword: "do everyone a favor".to_string(), category: "encouraging_self_harm".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "just end it".to_string(), category: "encouraging_self_harm".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "you should go".to_string(), category: "encouraging_self_harm".to_string(), weight: 1.0 },
+        KeywordEntry { keyword: "permanent solution".to_string(), category: "encouraging_self_harm".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "i know your phone".to_string(), category: "doxxing".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "your address is".to_string(), category: "doxxing".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "your workplace".to_string(), category: "doxxing".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "your school".to_string(), category: "doxxing".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "your employer".to_string(), category: "doxxing".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "your car".to_string(), category: "doxxing".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "license plate".to_string(), category: "doxxing".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "social security".to_string(), category: "doxxing".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "underage".to_string(), category: "minor_safety".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "how old are you really".to_string(), category: "minor_safety".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "where do you live minor".to_string(), category: "minor_safety".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "don't tell mods".to_string(), category: "minor_safety".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "keep this between us".to_string(), category: "minor_safety".to_string(), weight: 1.0 },
+        KeywordEntry { keyword: "don't report this".to_string(), category: "minor_safety".to_string(), weight: 1.0 },
+        KeywordEntry { keyword: "don't tell anyone".to_string(), category: "minor_safety".to_string(), weight: 1.0 },
+        KeywordEntry { keyword: "off platform".to_string(), category: "minor_safety".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "move to discord".to_string(), category: "minor_safety".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "move to dm".to_string(), category: "minor_safety".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "hate you".to_string(), category: "hate".to_string(), weight: 1.0 },
+        KeywordEntry { keyword: "disgusting".to_string(), category: "hate".to_string(), weight: 0.5 },
+        KeywordEntry { keyword: "go die".to_string(), category: "hate".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "fucking die".to_string(), category: "hate".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "i hope you suffer".to_string(), category: "hate".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "i hope you rot".to_string(), category: "hate".to_string(), weight: 1.5 },
+    ]
+}
+
+fn get_regex_patterns() -> Vec<RegexEntry> {
+    vec![
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b[a-z]\s*[._\-]\s*[a-z]\s*[._\-]\s*[a-z]\b").unwrap(),
+            category: "evasion".to_string(),
+            weight: 1.5,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b\w+1\w+1\w+\b").unwrap(),
+            category: "evasion".to_string(),
+            weight: 1.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b\w+[^a-zA-Z]+\w+[^a-zA-Z]+\w+\b").unwrap(),
+            category: "evasion".to_string(),
+            weight: 1.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b(k|K)(i|1|!)(l|1|!)(l|1|!)\b").unwrap(),
+            category: "evasion".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b(d|D)(i|1|!)(e|3)(a|4|@)(d|D)\b").unwrap(),
+            category: "evasion".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b(s|5)(e|3)(l|1)(f|ph)(-| )?(h|#|h)(a|4|@)(r|1|!)(m|m)\b").unwrap(),
+            category: "evasion".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b(m|m)(e|3)(t|\+|h)o(d|0|0)(o|0|q)(d|d)\b").unwrap(),
+            category: "supplying_method".to_string(),
+            weight: 1.5,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b(d|D)(o|0|o)(s|5|z)(e|3|@)(x|x)(i|1|!)(n|\\)(g|9)\b").unwrap(),
+            category: "doxxing".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b(\d{3})[-.\s]?\d{3}[-.\s]?\d{4}\b").unwrap(),
+            category: "doxxing".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b\d{5}(-\d{4})?\b").unwrap(),
+            category: "doxxing".to_string(),
+            weight: 1.5,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b").unwrap(),
+            category: "doxxing".to_string(),
+            weight: 1.5,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b(h|#)(e|3|€)(l|1|!)(l|1|!)(o|0|O)\b").unwrap(),
+            category: "evasion".to_string(),
+            weight: 1.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b(s|c|§)(a|4|@)(f|ph)(e|3|€)\b").unwrap(),
+            category: "evasion".to_string(),
+            weight: 1.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b(p|ph)(i|1|!)(l|1|!)(l|1|!)\b").unwrap(),
+            category: "self_harm_risk".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b(o|0)v(e|3|€)(r)(s|5|z)(i|1|!)(d|D)(e|3|€)\b").unwrap(),
+            category: "self_harm_risk".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b(s|5|\$)u(i|1|!)(c|k)(i|1|!)(d|D|)\b").unwrap(),
+            category: "self_harm_risk".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b(s|5|\$)l(i|1|!)t(s|5|\$)er\b").unwrap(),
+            category: "evasion".to_string(),
+            weight: 1.5,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b(c|k)(i|1|!)(l|1|!)(l|1|!)(i|1|!)n(g|9)\b").unwrap(),
+            category: "self_harm_risk".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b(f|ph)(l|1|!)(u|ü|v)(c|k)(k|)(i|1|!)n(g|9)\b").unwrap(),
+            category: "evasion".to_string(),
+            weight: 1.5,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b(m|w)h(a|4|@)(t(s|5|z))(a|4|@)(p|ph)(p|)\b").unwrap(),
+            category: "minor_safety".to_string(),
+            weight: 1.5,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b(t|7)(e|3|€)(l|1|!)(e|3|€)(g|9)(r|1|!)a(m|m)\b").unwrap(),
+            category: "minor_safety".to_string(),
+            weight: 1.5,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b(s|5|c)(p|ph)(e|3|€)(a|4|@)(r|1|!)(k|)(i|1|!)n(g|9)\b").unwrap(),
+            category: "minor_safety".to_string(),
+            weight: 1.5,
+        },
+    ]
+}
+
+fn normalize_text(text: &str) -> String {
+    let text = text.to_lowercase();
+    let text: String = text.chars().map(|c| match c {
+        '1' => 'i',
+        '3' => 'e',
+        '4' => 'a',
+        '5' => 's',
+        '7' => 't',
+        '0' => 'o',
+        _ => c,
+    }).collect();
+    let text: String = text.chars().map(|c| if c.is_alphanumeric() || c == ' ' { c } else { ' ' }).collect();
+    let text: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    text.trim().to_string()
+}
+
+fn get_automaton() -> aho_corasick::AhoCorasick {
+    let keywords = get_keywords();
+    let patterns: Vec<String> = keywords.iter().map(|k| k.keyword.clone()).collect();
+    aho_corasick::AhoCorasick::new(&patterns).expect("failed to build aho-corasick automaton")
+}
+
+fn get_state() -> Arc<RwLock<OmnimodState>> {
+    let keywords = get_keywords();
+    let automaton = get_automaton();
+    let regex_patterns = get_regex_patterns();
+    Arc::new(RwLock::new(OmnimodState {
+        keywords,
+        automaton,
+        regex_patterns,
+    }))
+}
+
+lazy_static::lazy_static! {
+    static ref OMNIMOD_STATE: Arc<RwLock<OmnimodState>> = get_state();
+}
+
+pub async fn run_pre_stage(text: &str, threshold: f64) -> PreStageResult {
+    let normalized = normalize_text(text);
+    let state = OMNIMOD_STATE.read().await;
+    let mut matches = Vec::new();
+    let mut score = 0.0;
+
+    for mat in state.automaton.find_iter(&normalized) {
+        let pattern = &state.keywords[mat.pattern()];
+        score += pattern.weight;
+        matches.push(PatternMatch {
+            category: pattern.category.clone(),
+            weight: pattern.weight,
+            matched: pattern.keyword.clone(),
+        });
+    }
+
+    for re in &state.regex_patterns {
+        if re.pattern.is_match(&normalized) {
+            score += re.weight;
+            matches.push(PatternMatch {
+                category: re.category.clone(),
+                weight: re.weight,
+                matched: re.pattern.as_str().to_string(),
+            });
+        }
+    }
+
+    let obfuscation_count = text.chars().filter(|c| is_obfuscation_char(*c)).count();
+    if obfuscation_count >= 2 {
+        score += 2.5;
+        matches.push(PatternMatch {
+            category: "obfuscation".to_string(),
+            weight: 2.5,
+            matched: format!("{} obfuscation chars", obfuscation_count),
+        });
+    }
+
+    let foreign_count = text.chars().filter(|c| is_non_latin_letter(*c)).count();
+    if foreign_count >= 4 {
+        score += 1.5;
+        matches.push(PatternMatch {
+            category: "foreign_script".to_string(),
+            weight: 1.5,
+            matched: format!("{} non-latin letters", foreign_count),
+        });
+    }
+
+    PreStageResult {
+        flagged: score >= threshold,
+        score,
+        matches,
+    }
+}
+
+fn is_obfuscation_char(c: char) -> bool {
+    matches!(c,
+        '\u{200B}'..='\u{200F}'
+        | '\u{20E3}'
+        | '\u{FEFF}'
+        | '\u{0300}'..='\u{036F}'
+    )
+}
+
+fn is_non_latin_letter(c: char) -> bool {
+    if !c.is_alphabetic() {
+        return false;
+    }
+    let cp = c as u32;
+    !((0x0000..=0x024F).contains(&cp)
+        || (0x1E00..=0x1EFF).contains(&cp)
+        || (0x2C60..=0x2C7F).contains(&cp)
+        || (0xA720..=0xA7FF).contains(&cp))
+}
+
+#[derive(Deserialize)]
+struct NovitaResponse {
+    choices: Vec<NovitaChoice>,
+}
+
+#[derive(Deserialize)]
+struct NovitaChoice {
+    message: NovitaMessage,
+}
+
+#[derive(Deserialize)]
+struct NovitaMessage {
+    content: Option<String>,
+    reasoning_content: Option<String>,
+}
+
+pub struct NovitaClient {
+    client: reqwest::Client,
+    api_key: String,
+}
+
+impl NovitaClient {
+    pub fn new(api_key: String) -> Self {
+        NovitaClient {
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(120))
+                .build()
+                .unwrap_or_default(),
+            api_key,
+        }
+    }
+
+    pub async fn call_stage1(&self, message: &str) -> Result<String, Error> {
+        let model = "meta-llama/llama-3.1-8b-instruct";
+        let system_prompt = "You are a triage filter for a chat community. You do not punish anyone. You decide only whether a human-grade reviewer should look at a message.
+
+You are looking for messages that LOOK clean on the surface but are not. Clean vocabulary is not evidence of innocence. Judge what the message is DOING, not which words it contains.
+
+Messages may be in ANY language or script, including transliterated or obfuscated text (keycap letters, combining marks, leetspeak, homoglyphs, spaces between letters). Translate it in your head; do not let non-English characters or evasion tricks make a harmful message look innocent.
+
+Escalate if any of these are plausible — plausible, not proven:
+
+1. The author may be at risk. Hopelessness, worthlessness, feeling like a burden, finality or goodbye tone, giving away possessions, sudden calm after a rough patch, asking about a method or a quantity, referencing self-harm by euphemism.
+2. The message may be telling someone else to die or harm themselves, however indirect, sarcastic, or joke-framed. Suggestions phrased as helpful advice, as a question, or as a comment about a method count.
+3. Someone is supplying method detail, dosage, or lethality information to another user.
+4. A threat, or a vague menacing reference to meeting someone or knowing where they are.
+5. Real-world identifying information about a person: name plus workplace, street, school, employer, vehicle.
+6. An adult seeking a minor's age, contact, privacy, or a move off-platform; any request to keep something from moderators.
+7. Deliberate filter evasion: letter substitution, spacing, homoglyphs, invented euphemism, or an in-joke that seems to stand in for something worse.
+8. A message that is mild alone but is the latest in a run aimed at the same person.
+
+Do NOT escalate ordinary rudeness, profanity, insults, arguments, dark humor about oneself with no ideation, grief, gaming or work hyperbole (\"this is killing me\", \"I'd rather die than sit through this\"), or good-faith discussion of hard topics.
+
+When torn, escalate. A wasted review costs nothing. A miss can cost a great deal.
+
+Output exactly one word, nothing else: ALLOW or ESCALATE";
+
+        let body = serde_json::json!({
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": message}
+            ],
+            "temperature": 0.1,
+            "max_tokens": 50,
+            "enable_thinking": false,
+        });
+
+        let response = self.client
+            .post(NOVITA_BASE_URL)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+
+        let text = response.text().await?;
+        let parsed: NovitaResponse = serde_json::from_str(&text)?;
+        let msg = parsed.choices.first().map(|c| &c.message);
+        let content = msg
+            .and_then(|m| m.content.as_deref().or(m.reasoning_content.as_deref()))
+            .unwrap_or("")
+            .trim()
+            .to_uppercase();
+
+        if content.contains("ESCALATE") {
+            Ok("ESCALATE".to_string())
+        } else {
+            Ok("ALLOW".to_string())
+        }
+    }
+
+    pub async fn call_stage2(&self, message: &str) -> Result<StageResult, Error> {
+        let model = "deepseek/deepseek-v4-flash-0731";
+        let system_prompt = "You are the adjudicating moderator for a chat community. A cheap filter flagged this message; most flags are false alarms, so do not assume guilt. Your specialty is implicit harm — messages with no slurs, no explicit threats, and no obvious rule-breaking words whose actual function is to wound, to encourage harm, or to evade moderation.
+
+## Language
+
+Messages may be in ANY language, script, or encoding. Translate and judge the meaning, never the surface characters. Obfuscation (keycap letters, combining marks, zero-width chars, leetspeak, homoglyphs, spaces between letters, transliteration) does not make a message innocent — evaluate what the message says once decoded.
+
+DECODING IS MANDATORY. Before judging, strip combining marks (keycap, diacritics, zero-width), remove spaces between letters, and transliterate. A message that looks like gibberish is often an obfuscated slur or threat in another language. If you cannot decode it to verify it is harmless, do NOT ALLOW it — output REVIEW. \"no discernible meaning\" is never a reason to ALLOW.
+
+## Output format (MANDATORY)
+
+Your ENTIRE response must be exactly one JSON object. Start with { and end with }. No thinking tags, no explanation, no markdown, no extra text. Just the JSON.
+
+Example: {\"label\":\"ALLOW\",\"confidence\":0.9,\"category\":\"none\",\"target\":\"none\",\"reason\":\"hyperbolic work frustration\"}
+
+## What to check
+
+1. What is the message DOING? Asking, joking, informing, wounding, recruiting, instructing, or signalling distress.
+2. Who is the target? THE CONTEXT LINE TELLS YOU WHO IS BEING ADDRESSED. If context mentions a person and the message addresses them, the target is OTHER, not SELF.
+3. Euphemisms: \"rope\" = hanging, \"sewerslide\" = suicide, \"bus schedule\" = being hit by a bus, \"find some rope\" = hang yourself, \"do the world a favor\" = die.
+4. Strip joke framing. \"/j\", \"lol\", \"jk\" do NOT neutralize harmful payloads. \"how many of my meds would it take, asking for no reason lol\" is still asking about lethal dosage.
+5. Direction is everything.
+
+## Hyperbole carve-out
+
+\"kms\", \"kill me\", \"i'd rather die\", \"this is killing me\", \"murdered me\" when clearly about work stress, gaming, deadlines, meetings, or technical frustration -> ALLOW.
+
+## CRISIS indicators (author at risk)
+
+These ALWAYS -> CRISIS:
+- Asking about method, quantity, or lethality of own harm (\"how many of my meds\", \"whats the best way to rope\")
+- Hopelessness, feeling like a burden, \"nobody would notice\", \"what's the point anymore\"
+- Giving away possessions or accounts (\"giving my setup to my brother\")
+- Finality or goodbye tone, \"made my peace with things\"
+- \"sewerslide\", \"self-harm\" euphemisms about self
+Ambiguity resolves to CRISIS. When in doubt, CRISIS.
+
+## Direction
+
+- Author about THEMSELVES -> CRISIS. Never punish.
+- Pointing at ANOTHER person suggesting they die or harm themselves -> BAN. Even oblique, sarcastic, or joke-framed.
+- Supplying method detail to distressed user -> BAN.
+
+## Context rules
+
+If context says \"@lily said she's struggling\" and message says \"nobody would miss you\" -> BAN (directed AT lily).
+If context says \"@kai posted art\" and message says \"lol who let you have a tablet\" -> REVIEW (mocking directed at kai).
+If context says \"user said they feel worthless\" and message says \"have you considered the bus schedule is very reliable\" -> BAN (suggesting method AT that user).
+A message that is mild alone but is the latest in a run aimed at the same person -> REVIEW.
+
+## Grooming
+
+Asks age + asks to move to DMs + asks to keep from moderators -> BAN (all three = grooming).
+Only asks to move platform without age/secrecy -> REVIEW.
+
+## Doxxing
+
+Real name + workplace/street/school/location -> BAN. Always severe.
+
+## Threats
+
+\"watch what happens next time you're at the meetup\" -> REVIEW. \"i know what street you live on\" -> BAN.
+
+## The REVIEW principle
+
+REVIEW is the safe default for anything ambiguous. When you are torn between ALLOW and REVIEW, choose REVIEW. When you are torn between BAN and REVIEW, choose REVIEW. A wasted review costs nothing. A miss can cost a great deal. This applies especially to:
+- Mocking or dismissing someone's creative work when context shows it's directed at them
+- Unsolicited negative advice about someone's interests or hobbies
+- Requests to move to other platforms that could be grooming-adjacent
+- Mild but potentially part of a harassment pattern
+
+## Labels
+
+- ALLOW — rudeness, profanity, arguments, dark humor, grief, gaming/work hyperbole, good-faith hard topics.
+- REVIEW — plausibly harmful, genuinely ambiguous, or part of a harassment pattern. Use when torn.
+- REMOVE — violating but no evident malice. Delete, no ban.
+- BAN — targeted, deliberate, severe. Encouraging harm, supplying method, threats, doxxing, grooming, telling someone to die.
+- CRISIS — author at risk. Support route, not punishment. Overrides all other labels.
+
+## Confidence
+
+If BAN confidence < 0.75, output REVIEW instead. No floor for CRISIS.";
+
+        let body = serde_json::json!({
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": message}
+            ],
+            "temperature": 0.1,
+            "max_tokens": 2000,
+            "enable_thinking": false,
+        });
+
+        let response = self.client
+            .post(NOVITA_BASE_URL)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+
+        let text = response.text().await?;
+        let parsed: NovitaResponse = serde_json::from_str(&text)?;
+        let msg = parsed.choices.first().map(|c| &c.message);
+        let content = msg
+            .and_then(|m| m.content.as_deref().filter(|s| !s.is_empty()))
+            .unwrap_or("")
+            .trim()
+            .to_string();
+
+        if content.is_empty() {
+            tracing::warn!("omnimod: stage2 returned empty content");
+            return Ok(StageResult {
+                label: "REVIEW".to_string(),
+                confidence: 0.5,
+                category: "empty_model_output".to_string(),
+                target: "none".to_string(),
+                reason: "model returned no verdict".to_string(),
+            });
+        }
+
+        parse_stage2_output(&content)
+    }
+}
+
+fn parse_stage2_output(text: &str) -> Result<StageResult, Error> {
+    let json_start = text.find('{').unwrap_or(0);
+    let json_str = &text[json_start..];
+    let parsed: serde_json::Value = serde_json::from_str(json_str)?;
+
+    let label = parsed.get("label").and_then(|v| v.as_str()).unwrap_or("REVIEW").to_string();
+    let confidence = parsed.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.5);
+    let category = parsed.get("category").and_then(|v| v.as_str()).unwrap_or("none").to_string();
+    let target = parsed.get("target").and_then(|v| v.as_str()).unwrap_or("none").to_string();
+    let reason = parsed.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    Ok(StageResult {
+        label,
+        confidence,
+        category,
+        target,
+        reason,
+    })
+}
+
+pub async fn get_omnimod_config(db: &sqlx::PgPool, guild_id: i64) -> Result<OmnimodConfig, Error> {
+    let row = sqlx::query_as::<_, (bool, f64, String, String, f64, f64, Option<i64>)>(
+        "SELECT enabled, pre_stage_threshold, stage1_model, stage2_model, stage1_confidence_threshold, stage2_confidence_threshold, log_channel_id FROM omnimod_config WHERE guild_id = $1",
+    )
+    .bind(guild_id)
+    .fetch_optional(db)
+    .await?;
+
+    match row {
+        Some(r) => Ok(OmnimodConfig {
+            guild_id,
+            enabled: r.0,
+            pre_stage_threshold: r.1,
+            stage1_model: r.2,
+            stage2_model: r.3,
+            stage1_confidence_threshold: r.4,
+            stage2_confidence_threshold: r.5,
+            log_channel_id: r.6,
+        }),
+        None => {
+            sqlx::query(
+                "INSERT INTO omnimod_config (guild_id, enabled) VALUES ($1, false)",
+            )
+            .bind(guild_id)
+            .execute(db)
+            .await?;
+            Ok(OmnimodConfig::default(guild_id))
+        }
+    }
+}
+
+pub async fn set_omnimod_enabled(db: &sqlx::PgPool, guild_id: i64, enabled: bool) -> Result<(), Error> {
+    sqlx::query("UPDATE omnimod_config SET enabled = $1 WHERE guild_id = $2")
+        .bind(enabled)
+        .bind(guild_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+pub async fn set_omnimod_threshold(db: &sqlx::PgPool, guild_id: i64, threshold: f64) -> Result<(), Error> {
+    sqlx::query("UPDATE omnimod_config SET pre_stage_threshold = $1 WHERE guild_id = $2")
+        .bind(threshold)
+        .bind(guild_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+pub async fn set_omnimod_models(db: &sqlx::PgPool, guild_id: i64, stage1: String, stage2: String) -> Result<(), Error> {
+    sqlx::query("UPDATE omnimod_config SET stage1_model = $1, stage2_model = $2 WHERE guild_id = $3")
+        .bind(&stage1)
+        .bind(&stage2)
+        .bind(guild_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+pub async fn set_omnimod_log_channel(db: &sqlx::PgPool, guild_id: i64, channel_id: Option<i64>) -> Result<(), Error> {
+    sqlx::query("UPDATE omnimod_config SET log_channel_id = $1 WHERE guild_id = $2")
+        .bind(channel_id)
+        .bind(guild_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+pub async fn log_omnimod_flag(
+    db: &sqlx::PgPool,
+    guild_id: i64,
+    channel_id: i64,
+    message_id: i64,
+    author_id: i64,
+    content: &str,
+    stage: &str,
+    label: Option<&str>,
+    confidence: Option<f64>,
+    reason: Option<&str>,
+    action_taken: Option<&str>,
+) -> Result<i64, Error> {
+    let content_truncated = if content.len() > 1000 {
+        &content[..1000]
+    } else {
+        content
+    };
+    let row: (i64,) = sqlx::query_as(
+        "INSERT INTO omnimod_flags (guild_id, channel_id, message_id, author_id, content, stage, label, confidence, reason, action_taken, case_number) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, (SELECT COALESCE(MAX(case_number), 0) + 1 FROM omnimod_flags WHERE guild_id = $1)) RETURNING case_number"
+    )
+    .bind(guild_id)
+    .bind(channel_id)
+    .bind(message_id)
+    .bind(author_id)
+    .bind(content_truncated)
+    .bind(stage)
+    .bind(label)
+    .bind(confidence)
+    .bind(reason)
+    .bind(action_taken)
+    .fetch_one(db)
+    .await?;
+    Ok(row.0)
+}
+
+pub async fn get_recent_flags(db: &sqlx::PgPool, guild_id: i64, limit: i32) -> Result<Vec<(i64, i64, String, Option<String>, chrono::DateTime<chrono::Utc>)>, Error> {
+    let rows = sqlx::query_as::<_, (i64, i64, String, Option<String>, chrono::DateTime<chrono::Utc>)>(
+        "SELECT case_number, message_id, content, label, created_at FROM omnimod_flags WHERE guild_id = $1 ORDER BY created_at DESC LIMIT $2"
+    )
+    .bind(guild_id)
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn handle_message(
+    http: &serenity::Http,
+    db: &sqlx::PgPool,
+    msg: &serenity::Message,
+) {
+    if msg.author.bot {
+        return;
+    }
+
+    let guild_id = match msg.guild_id {
+        Some(g) => g.get() as i64,
+        None => return,
+    };
+
+    let config = match get_omnimod_config(db, guild_id).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("omnimod config fetch error: {:?}", e);
+            return;
+        }
+    };
+
+    if !config.enabled {
+        return;
+    }
+
+    let content = msg.content.trim();
+    if content.is_empty() {
+        return;
+    }
+
+    let pre_result = run_pre_stage(content, config.pre_stage_threshold).await;
+    tracing::info!("omnimod: score={:.2} flagged={} matches={}", pre_result.score, pre_result.flagged, pre_result.matches.len());
+
+    if !pre_result.flagged {
+        return;
+    }
+
+    let _ = log_omnimod_flag(
+        db,
+        guild_id,
+        msg.channel_id.get() as i64,
+        msg.id.get() as i64,
+        msg.author.id.get() as i64,
+        content,
+        "pre_stage",
+        Some("FLAGGED"),
+        Some(pre_result.score),
+        Some(&format!("pre_stage matches: {:?}", pre_result.matches.iter().map(|m| &m.category).collect::<Vec<_>>())),
+        None,
+    ).await;
+
+    let api_key = match std::env::var("NOVITA_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => {
+            tracing::info!("omnimod: NOVITA_KEY not set, skipping LLM stages");
+            return;
+        }
+    };
+
+    let client = NovitaClient::new(api_key);
+    let message_text = msg.content.clone();
+
+    let direct_to_stage2 = pre_result.matches.iter().any(|m| {
+        m.category == "obfuscation" || m.category == "foreign_script"
+    });
+
+    if !direct_to_stage2 {
+        let stage1_result = match client.call_stage1(&message_text).await {
+            Ok(r) => {
+                tracing::info!("omnimod: stage1={}", r);
+                r
+            }
+            Err(e) => {
+                tracing::error!("stage1 novita error: {:?}", e);
+                return;
+            }
+        };
+
+        if stage1_result == "ALLOW" {
+            let _ = log_omnimod_flag(
+                db,
+                guild_id,
+                msg.channel_id.get() as i64,
+                msg.id.get() as i64,
+                msg.author.id.get() as i64,
+                content,
+                "stage1",
+                Some("ALLOW"),
+                Some(1.0),
+                Some("stage1 allowed"),
+                None,
+            ).await;
+            return;
+        }
+    }
+
+    let stage2_result = match client.call_stage2(&message_text).await {
+        Ok(r) => {
+            tracing::info!("omnimod: stage2={} confidence={:.2}", r.label, r.confidence);
+            r
+        }
+        Err(e) => {
+            tracing::error!("stage2 novita error: {:?}", e);
+            return;
+        }
+    };
+
+    let mut stage2_result = stage2_result;
+    if stage2_result.label == "ALLOW"
+        && pre_result.matches.iter().any(|m| m.category == "obfuscation" || m.category == "foreign_script")
+    {
+        tracing::info!("omnimod: obfuscation/foreign content allowed by stage2, downgrading to REVIEW");
+        stage2_result.label = "REVIEW".to_string();
+        stage2_result.reason = format!("{} (model allowed, obfuscated content)", stage2_result.reason);
+    }
+
+    let label = stage2_result.label.clone();
+    let confidence = stage2_result.confidence;
+
+    let action_taken = match label.as_str() {
+        "CRISIS" => {
+            let _ = send_crisis_dm(http, msg).await;
+            "crisis_dm_sent"
+        }
+        "BAN" => {
+            let gid = serenity::GuildId::new(guild_id as u64);
+            if let Ok(guild) = gid.to_partial_guild(http).await {
+                let _ = guild.ban_with_reason(http, msg.author.id, 7, "omnimod: banned by automated moderation").await;
+            }
+            let _ = msg.delete(http).await;
+            "banned_and_deleted"
+        }
+        "REMOVE" => {
+            let _ = msg.delete(http).await;
+            "message_deleted"
+        }
+        "REVIEW" => {
+            "logged_for_review"
+        }
+        _ => "no_action",
+    };
+
+    let case_number = log_omnimod_flag(
+        db,
+        guild_id,
+        msg.channel_id.get() as i64,
+        msg.id.get() as i64,
+        msg.author.id.get() as i64,
+        content,
+        "stage2",
+        Some(&label),
+        Some(confidence),
+        Some(&stage2_result.reason),
+        Some(action_taken),
+    ).await.unwrap_or(0);
+
+    if let Some(log_channel_id) = config.log_channel_id {
+        let _ = send_log_embed(http, log_channel_id, msg, &stage2_result, &pre_result, case_number, action_taken).await;
+    }
+
+    if !msg.attachments.is_empty() && crate::image_classifier::CLASSIFIER.is_some() {
+        for attachment in &msg.attachments {
+            if let Ok(response) = reqwest::get(&attachment.url).await {
+                if let Ok(bytes) = response.bytes().await {
+                    let is_gif = attachment.filename.to_lowercase().ends_with(".gif");
+                    let result = if is_gif {
+                        crate::image_classifier::classify_gif(&bytes)
+                    } else {
+                        crate::image_classifier::classify_image(&bytes)
+                    };
+                    if let Ok(result) = result {
+                        if result.is_nsfw {
+                            let _ = msg.delete(http).await;
+                            let _ = log_omnimod_flag(
+                                db,
+                                guild_id,
+                                msg.channel_id.get() as i64,
+                                msg.id.get() as i64,
+                                msg.author.id.get() as i64,
+                                content,
+                                "image",
+                                Some(&result.dominant_class),
+                                Some(result.nsfw_score as f64),
+                                Some(&format!("nsfw image: {} (score: {:.3})", result.dominant_class, result.nsfw_score)),
+                                Some("image_nsfw_deleted"),
+                            ).await;
+                            if let Some(log_channel_id) = config.log_channel_id {
+                                let _ = send_image_log_embed(http, log_channel_id, msg, &result, attachment).await;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn send_crisis_dm(
+    http: &serenity::Http,
+    msg: &serenity::Message,
+) -> Result<(), Error> {
+    let _ = msg.author.dm(http, serenity::CreateMessage::new()
+        .embed(
+            serenity::CreateEmbed::new()
+                .title("we noticed something")
+                .description("someone on this server cares about you. if you're going through a hard time, there are people who want to help.")
+                .field("resources", "988 suicide & crisis lifeline: call or text 988\ncrisis text line: text home to 741741", false)
+                .color(0x80F291)
+        )
+    ).await;
+    Ok(())
+}
+
+async fn send_log_embed(
+    http: &serenity::Http,
+    log_channel_id: i64,
+    msg: &serenity::Message,
+    stage2: &StageResult,
+    pre_stage: &PreStageResult,
+    case_number: i64,
+    action_taken: &str,
+) -> Result<(), Error> {
+    let channel = serenity::ChannelId::new(log_channel_id as u64);
+    let embed = serenity::CreateEmbed::new()
+        .title(format!("case #{} — {} — {}", case_number, action_taken.replace('_', " "), stage2.label))
+        .field("author", format!("<@{}>", msg.author.id), true)
+        .field("message", msg.content.chars().take(500).collect::<String>(), false)
+        .field("label", &stage2.label, true)
+        .field("confidence", format!("{:.2}", stage2.confidence), true)
+        .field("category", &stage2.category, true)
+        .field("target", &stage2.target, true)
+        .field("pre_stage_score", format!("{:.2}", pre_stage.score), true)
+        .field("reason", &stage2.reason, false)
+        .color(0xF28080)
+        .timestamp(chrono::Utc::now());
+
+    let _ = channel.send_message(http, serenity::CreateMessage::new().embed(embed)).await;
+    Ok(())
+}
+
+async fn send_image_log_embed(
+    http: &serenity::Http,
+    log_channel_id: i64,
+    msg: &serenity::Message,
+    result: &crate::image_classifier::NsfwResult,
+    attachment: &serenity::Attachment,
+) -> Result<(), Error> {
+    let channel = serenity::ChannelId::new(log_channel_id as u64);
+    let embed = serenity::CreateEmbed::new()
+        .title(format!("case #{} — image nsfw — {}", 0, result.dominant_class))
+        .field("author", format!("<@{}>", msg.author.id), true)
+        .field("message", msg.content.chars().take(500).collect::<String>(), false)
+        .field("image", attachment.url.as_str(), false)
+        .field("nsfw_score", format!("{:.3}", result.nsfw_score), true)
+        .field("dominant_class", &result.dominant_class, true)
+        .field("reason", format!("image classification: {} (score: {:.3})", result.dominant_class, result.nsfw_score), false)
+        .color(0xF28080)
+        .timestamp(chrono::Utc::now());
+
+    let _ = channel.send_message(http, serenity::CreateMessage::new().embed(embed)).await;
+    Ok(())
+}
+
+#[poise::command(slash_command, category = "omnimod", subcommands("enable", "disable", "status", "setthreshold", "setmodels", "setlogchannel", "flags", "addpattern", "removepattern", "test"))]
+pub async fn omnimod(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.say("omnimod subcommands: `enable`, `disable`, `status`, `setthreshold`, `setmodels`, `setlogchannel`, `flags`, `addpattern`, `removepattern`, `test`").await?;
+    Ok(())
+}
+
+#[poise::command(slash_command, category = "omnimod", required_permissions = "MANAGE_GUILD")]
+pub async fn enable(ctx: Context<'_>) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().ok_or("must be used in a guild")?.get() as i64;
+
+    let existing = get_omnimod_config(&ctx.data().db, guild_id).await?;
+    if existing.enabled {
+        ctx.send(
+            poise::CreateReply::default().embed(
+                serenity::CreateEmbed::new()
+                    .description("omnimod is already enabled for this server. use `/omnimod disable` first.")
+                    .color(0xF2D380),
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    ctx.send(
+        poise::CreateReply::default()
+            .embed(
+                serenity::CreateEmbed::new()
+                    .title("confirmation")
+                    .description(
+                        "omnimod uses machine learning to scan messages and classify them by risk. \
+                         it is a moderator assistant, not a replacement for human judgment.\n\n\
+                         by enabling, you agree that:\n\
+                         • all messages will be scanned in real time via novita.ai\n\
+                         • flagged content may be automatically deleted or result in bans\n\
+                         • message content is stored in an audit log for admin review\n\
+                         • no system is perfect — false positives/negatives will occur\n\
+                         • you can disable this at any time with `/omnimod disable`\n\n\
+                         by clicking enable, you confirm you have authority to enable this on behalf of the server.",
+                    )
+                    .color(0x5865F2),
+            )
+            .components(vec![
+                serenity::CreateActionRow::Buttons(vec![
+                    serenity::CreateButton::new(format!("omnimod_confirm_enable:{}", guild_id))
+                        .label("enable")
+                        .style(serenity::ButtonStyle::Success),
+                    serenity::CreateButton::new(format!("omnimod_cancel_enable:{}", guild_id))
+                        .label("cancel")
+                        .style(serenity::ButtonStyle::Danger),
+                ]),
+            ]),
+    )
+    .await?;
+    Ok(())
+}
+
+pub async fn handle_omnimod_enable_button(
+    ctx: &serenity::Context,
+    component: &serenity::ComponentInteraction,
+    db: &sqlx::PgPool,
+) -> Result<(), Error> {
+    let custom_id = &component.data.custom_id;
+
+    if custom_id.starts_with("omnimod_confirm_enable:") {
+        let guild_id: i64 = custom_id.split(':').nth(1).unwrap_or("0").parse().unwrap_or(0);
+        if guild_id == 0 {
+            let _ = component.create_response(
+                ctx,
+                serenity::CreateInteractionResponse::UpdateMessage(
+                    serenity::CreateInteractionResponseMessage::new()
+                        .content("")
+                        .embed(
+                            serenity::CreateEmbed::new()
+                                .description("error: could not determine guild")
+                                .color(0xF28080),
+                        )
+                        .components(vec![]),
+                ),
+            ).await;
+            return Ok(());
+        }
+
+        set_omnimod_enabled(db, guild_id, true).await?;
+
+        let _ = component.create_response(
+            ctx,
+            serenity::CreateInteractionResponse::UpdateMessage(
+                serenity::CreateInteractionResponseMessage::new()
+                    .content("")
+                    .embed(
+                        serenity::CreateEmbed::new()
+                            .description("omnimod enabled for this server")
+                            .color(0x80F291),
+                    )
+                    .components(vec![]),
+            ),
+        ).await;
+    } else if custom_id.starts_with("omnimod_cancel_enable:") {
+        let _ = component.create_response(
+            ctx,
+            serenity::CreateInteractionResponse::UpdateMessage(
+                serenity::CreateInteractionResponseMessage::new()
+                    .content("")
+                    .embed(
+                        serenity::CreateEmbed::new()
+                            .description("omnimod enable cancelled")
+                            .color(0xF2D380),
+                    )
+                    .components(vec![]),
+            ),
+        ).await;
+    }
+
+    Ok(())
+}
+
+#[poise::command(slash_command, category = "omnimod", required_permissions = "MANAGE_GUILD")]
+pub async fn disable(ctx: Context<'_>) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().ok_or("must be used in a guild")?.get() as i64;
+    set_omnimod_enabled(&ctx.data().db, guild_id, false).await?;
+    ctx.send(
+        poise::CreateReply::default().embed(
+            serenity::CreateEmbed::new()
+                .description("omnimod disabled for this server")
+                .color(0xF28080),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+#[poise::command(slash_command, category = "omnimod", required_permissions = "MANAGE_GUILD")]
+pub async fn status(ctx: Context<'_>) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().ok_or("must be used in a guild")?.get() as i64;
+    let config = get_omnimod_config(&ctx.data().db, guild_id).await?;
+
+    ctx.send(
+        poise::CreateReply::default().embed(
+            serenity::CreateEmbed::new()
+                .title("omnimod status")
+                .field("enabled", config.enabled.to_string(), true)
+                .field("pre_stage_threshold", format!("{:.2}", config.pre_stage_threshold), true)
+                .field("stage1_model", &config.stage1_model, true)
+                .field("stage2_model", &config.stage2_model, true)
+                .field("stage1_confidence", format!("{:.2}", config.stage1_confidence_threshold), true)
+                .field("stage2_confidence", format!("{:.2}", config.stage2_confidence_threshold), true)
+                .field("log_channel", config.log_channel_id.map(|id| format!("<#{}>", id)).unwrap_or("not set".to_string()), true)
+                .color(0x5865F2),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+#[poise::command(slash_command, category = "omnimod", required_permissions = "MANAGE_GUILD")]
+pub async fn setthreshold(
+    ctx: Context<'_>,
+    #[description = "pre-stage score threshold (0.0-1.0)"] threshold: f64,
+) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().ok_or("must be used in a guild")?.get() as i64;
+    let threshold = threshold.clamp(0.0, 1.0);
+    set_omnimod_threshold(&ctx.data().db, guild_id, threshold).await?;
+    ctx.send(
+        poise::CreateReply::default().embed(
+            serenity::CreateEmbed::new()
+                .description(format!("pre-stage threshold set to **{:.2}**", threshold))
+                .color(0x80F291),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+#[poise::command(slash_command, category = "omnimod", required_permissions = "MANAGE_GUILD")]
+pub async fn setmodels(
+    ctx: Context<'_>,
+    #[description = "stage 1 model id"] stage1: String,
+    #[description = "stage 2 model id"] stage2: String,
+) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().ok_or("must be used in a guild")?.get() as i64;
+    set_omnimod_models(&ctx.data().db, guild_id, stage1, stage2).await?;
+    ctx.send(
+        poise::CreateReply::default().embed(
+            serenity::CreateEmbed::new()
+                .description("models updated")
+                .color(0x80F291),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+#[poise::command(slash_command, category = "omnimod", required_permissions = "MANAGE_GUILD")]
+pub async fn setlogchannel(
+    ctx: Context<'_>,
+    #[description = "channel to send omnimod logs to"] channel: Option<serenity::Channel>,
+) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().ok_or("must be used in a guild")?.get() as i64;
+    let channel_id = channel.map(|c| c.id().get() as i64);
+    set_omnimod_log_channel(&ctx.data().db, guild_id, channel_id).await?;
+    ctx.send(
+        poise::CreateReply::default().embed(
+            serenity::CreateEmbed::new()
+                .description(format!("log channel {}", channel_id.map(|id| format!("<#{}>", id)).unwrap_or("cleared".to_string())))
+                .color(0x80F291),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+#[poise::command(slash_command, category = "omnimod", required_permissions = "MANAGE_GUILD")]
+pub async fn flags(ctx: Context<'_>, #[description = "number of flags to show"] limit: Option<u32>) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().ok_or("must be used in a guild")?.get() as i64;
+    let limit = limit.unwrap_or(10).min(25) as i32;
+    let flags = get_recent_flags(&ctx.data().db, guild_id, limit).await?;
+
+    if flags.is_empty() {
+        ctx.send(
+            poise::CreateReply::default().embed(
+                serenity::CreateEmbed::new()
+                    .description("no flags recorded yet")
+                    .color(0x5865F2),
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let mut description = String::new();
+    for (case_number, msg_id, content, label, created_at) in &flags {
+        let content_preview = content.chars().take(100).collect::<String>();
+        description.push_str(&format!(
+            "`case #{}` | {} | {} | {}\n{}\n\n",
+            case_number,
+            label.as_deref().unwrap_or("unknown"),
+            created_at.format("%m/%d %H:%M"),
+            msg_id,
+            content_preview,
+        ));
+    }
+
+    ctx.send(
+        poise::CreateReply::default().embed(
+            serenity::CreateEmbed::new()
+                .title(format!("recent flags ({} shown)", flags.len()))
+                .description(&description)
+                .color(0xF28080),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+#[poise::command(slash_command, category = "omnimod", required_permissions = "MANAGE_GUILD")]
+pub async fn addpattern(
+    ctx: Context<'_>,
+    #[description = "pattern to match"] pattern: String,
+    #[description = "pattern category"] category: Option<String>,
+    #[description = "match weight (0.1-5.0)"] weight: Option<f64>,
+) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().ok_or("must be used in a guild")?.get() as i64;
+    let category = category.unwrap_or("general".to_string());
+    let weight = weight.unwrap_or(1.0).clamp(0.1, 5.0);
+
+    sqlx::query(
+        "INSERT INTO omnimod_patterns (guild_id, pattern, category, weight, regex) VALUES ($1, $2, $3, $4, false)"
+    )
+    .bind(guild_id)
+    .bind(&pattern)
+    .bind(&category)
+    .bind(weight)
+    .execute(&ctx.data().db)
+    .await?;
+
+    ctx.send(
+        poise::CreateReply::default().embed(
+            serenity::CreateEmbed::new()
+                .description(format!("added keyword pattern `{}` (category: {}, weight: {:.1})", pattern, category, weight))
+                .color(0x80F291),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+#[poise::command(slash_command, category = "omnimod", required_permissions = "MANAGE_GUILD")]
+pub async fn removepattern(ctx: Context<'_>, #[description = "pattern id to remove"] id: i32) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().ok_or("must be used in a guild")?.get() as i64;
+
+    let result = sqlx::query("DELETE FROM omnimod_patterns WHERE id = $1 AND guild_id = $2")
+        .bind(id)
+        .bind(guild_id)
+        .execute(&ctx.data().db)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        ctx.send(
+            poise::CreateReply::default().embed(
+                serenity::CreateEmbed::new()
+                    .description("pattern not found")
+                    .color(0xF28080),
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    ctx.send(
+        poise::CreateReply::default().embed(
+            serenity::CreateEmbed::new()
+                .description(format!("removed pattern `{}`", id))
+                .color(0x80F291),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+#[poise::command(slash_command, category = "omnimod", required_permissions = "MANAGE_GUILD")]
+pub async fn test(
+    ctx: Context<'_>,
+    #[description = "message to test against the filter"] message: String,
+) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().ok_or("must be used in a guild")?.get() as i64;
+    let config = get_omnimod_config(&ctx.data().db, guild_id).await?;
+
+    let pre_result = run_pre_stage(&message, config.pre_stage_threshold).await;
+
+    let mut description = String::new();
+    description.push_str(&format!("pre-stage score: **{:.2}** (threshold: {:.2})\n", pre_result.score, config.pre_stage_threshold));
+    description.push_str(&format!("pre-stage flagged: **{}**\n\n", pre_result.flagged));
+
+    if !pre_result.matches.is_empty() {
+        description.push_str("**matches:**\n");
+        for m in &pre_result.matches {
+            description.push_str(&format!("  - {} ({} weight: {:.1})\n", m.matched, m.category, m.weight));
+        }
+        description.push('\n');
+    }
+
+    if pre_result.flagged {
+        if let Ok(api_key) = std::env::var("NOVITA_KEY") {
+            if !api_key.is_empty() {
+                let client = NovitaClient::new(api_key);
+                match client.call_stage1(&message).await {
+                    Ok(stage1) => {
+                        description.push_str(&format!("stage1 result: **{}**\n", stage1));
+                        if stage1 == "ESCALATE" {
+                            match client.call_stage2(&message).await {
+                                Ok(stage2) => {
+                                    description.push_str(&format!("stage2 label: **{}**\n", stage2.label));
+                                    description.push_str(&format!("stage2 confidence: **{:.2}**\n", stage2.confidence));
+                                    description.push_str(&format!("stage2 category: **{}**\n", stage2.category));
+                                    description.push_str(&format!("stage2 target: **{}**\n", stage2.target));
+                                    description.push_str(&format!("stage2 reason: **{}**\n", stage2.reason));
+                                }
+                                Err(_) => {
+                                    description.push_str("stage2: error running model\n");
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        description.push_str("stage1: error running model\n");
+                    }
+                }
+            } else {
+                description.push_str("stage1/stage2: skipped (no novita key in env)\n");
+            }
+        } else {
+            description.push_str("stage1/stage2: skipped (no novita key in env)\n");
+        }
+    }
+
+    ctx.send(
+        poise::CreateReply::default().embed(
+            serenity::CreateEmbed::new()
+                .title("omnimod test result")
+                .description(&description)
+                .color(if pre_result.flagged { 0xF28080 } else { 0x80F291 }),
+        ),
+    )
+    .await?;
+    Ok(())
+}

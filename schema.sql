@@ -158,3 +158,49 @@ CREATE TABLE IF NOT EXISTS starboard_messages (
     starboard_msg_id BIGINT NOT NULL,
     star_count INT NOT NULL DEFAULT 0
 );
+
+-- omnimod per-guild configuration
+CREATE TABLE IF NOT EXISTS omnimod_config (
+    guild_id BIGINT PRIMARY KEY,
+    enabled BOOLEAN NOT NULL DEFAULT false,
+    pre_stage_threshold FLOAT NOT NULL DEFAULT 0.5,
+    stage1_model TEXT NOT NULL DEFAULT 'meta-llama/llama-3.1-8b-instruct',
+    stage2_model TEXT NOT NULL DEFAULT 'zai-org/glm-4.7-flash',
+    stage1_confidence_threshold FLOAT NOT NULL DEFAULT 0.5,
+    stage2_confidence_threshold FLOAT NOT NULL DEFAULT 0.75,
+    novita_api_key TEXT,
+    log_channel_id BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- omnimod custom patterns per guild
+CREATE TABLE IF NOT EXISTS omnimod_patterns (
+    id SERIAL PRIMARY KEY,
+    guild_id BIGINT NOT NULL,
+    pattern TEXT NOT NULL,
+    pattern_type TEXT NOT NULL DEFAULT 'keyword',
+    category TEXT NOT NULL DEFAULT 'general',
+    weight FLOAT NOT NULL DEFAULT 1.0,
+    regex BOOLEAN NOT NULL DEFAULT false,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- omnimod flagged messages audit log
+CREATE TABLE IF NOT EXISTS omnimod_flags (
+    id SERIAL PRIMARY KEY,
+    guild_id BIGINT NOT NULL,
+    channel_id BIGINT NOT NULL,
+    message_id BIGINT NOT NULL,
+    author_id BIGINT NOT NULL,
+    content TEXT NOT NULL,
+    stage TEXT NOT NULL DEFAULT 'pre_stage',
+    label TEXT,
+    confidence FLOAT,
+    reason TEXT,
+    action_taken TEXT,
+    case_number INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE omnimod_flags ADD COLUMN IF NOT EXISTS case_number INTEGER NOT NULL DEFAULT 1;

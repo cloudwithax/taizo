@@ -4,6 +4,7 @@ pub mod emoji;
 pub mod fun;
 pub mod info;
 pub mod moderation;
+pub mod omnimod;
 pub mod owner;
 pub mod reactionrole;
 pub mod starboard;

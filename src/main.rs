@@ -1,4 +1,5 @@
 mod commands;
+mod image_classifier;
 
 use poise::serenity_prelude as serenity;
 use sqlx::postgres::PgPoolOptions;
@@ -27,7 +28,7 @@ async fn main() {
 
     let token = std::env::var("TOKEN").expect("missing TOKEN");
     let database_url = std::env::var("DATABASE_URL").expect("missing DATABASE_URL");
-    let intents = serenity::GatewayIntents::non_privileged();
+    let intents = serenity::GatewayIntents::non_privileged() | serenity::GatewayIntents::MESSAGE_CONTENT;
 
     let db = PgPoolOptions::new()
         .max_connections(5)
@@ -68,6 +69,17 @@ async fn main() {
                 commands::moderation::setwelcome(),
                 commands::moderation::setleave(),
                 commands::moderation::honeypot(),
+                commands::omnimod::omnimod(),
+                commands::omnimod::enable(),
+                commands::omnimod::disable(),
+                commands::omnimod::status(),
+                commands::omnimod::setthreshold(),
+                commands::omnimod::setmodels(),
+                commands::omnimod::setlogchannel(),
+                commands::omnimod::flags(),
+                commands::omnimod::addpattern(),
+                commands::omnimod::removepattern(),
+                commands::omnimod::test(),
                 commands::fun::say(),
                 commands::fun::choose(),
                 commands::fun::hug(),
@@ -159,6 +171,7 @@ async fn main() {
                         serenity::FullEvent::Message { new_message } => {
                             if let Some(db) = ctx.data.read().await.get::<DbKey>().cloned() {
                                 commands::moderation::handle_honeypot_message(&ctx.http, &db, new_message).await;
+                                commands::omnimod::handle_message(&ctx.http, &db, new_message).await;
                             }
                             commands::fun::on_message(new_message).await;
                         }
@@ -215,6 +228,15 @@ async fn main() {
                                     }
                                 }
                             }
+                        }
+                        serenity::FullEvent::GuildCreate { guild, .. } => {
+                            poise::builtins::register_in_guild(
+                                ctx,
+                                &framework.options().commands,
+                                guild.id,
+                            )
+                            .await?;
+                            info!("Registered slash commands for new guild {}", guild.id);
                         }
                         serenity::FullEvent::GuildMemberAddition { new_member } => {
                             if let Some(db) = ctx.data.read().await.get::<DbKey>().cloned() {
@@ -455,6 +477,14 @@ async fn main() {
                                     if let Some(db) = db {
                                         if let Err(e) = commands::auditlog::handle_auditlog_edit_config(ctx, component, &db).await {
                                             error!("auditlog_edit_config error: {:?}", e);
+                                        }
+                                    }
+                                }
+                                if component.data.custom_id.starts_with("omnimod_confirm_enable:") || component.data.custom_id.starts_with("omnimod_cancel_enable:") {
+                                    let db = ctx.data.read().await.get::<DbKey>().cloned();
+                                    if let Some(db) = db {
+                                        if let Err(e) = commands::omnimod::handle_omnimod_enable_button(ctx, component, &db).await {
+                                            error!("omnimod_enable_button error: {:?}", e);
                                         }
                                     }
                                 }
