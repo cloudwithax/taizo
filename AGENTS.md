@@ -100,7 +100,7 @@ Register in `main.rs` under `framework.options().commands`. Each module lives in
 
 - **API**: Self-hosted at `https://omnimodapi.clxud.dev/v1/chat/completions` using llama.cpp backend. API key env var is `OMNIMOD_API_KEY`.
 - **Model**: `Qwen3.5-4B-Q4_K_M.gguf` for both stage 1 (triage) and stage 2 (adjudication). Model ID is the full path: `/home/clxud/models/Qwen3.5-4B-Q4_K_M.gguf`.
-- **`enable_thinking` parameter**: Not supported by llama.cpp backend. Don't include it in API requests — it's silently ignored.
+- **`enable_thinking` parameter**: Not supported directly in the request body. Use `chat_template_kwargs: {"enable_thinking": false}` instead to disable thinking mode.
 - **Cloudflare blocks Python urllib**: Default Python User-Agent gets 403'd. Set `User-Agent: curl/8.14.1` and `Accept: */*` headers in test scripts.
 - **Prompt tuning for small models**: The 4B model needs explicit direction rules. Imperatives and information-sharing must be explicitly called out as other-directed (BAN), not self-directed (CRISIS). The model defaults to CRISIS for ambiguous direction without explicit guidance.
 - **Benchmark**: `test_omnimod.py` tests stage 2 prompt only. Run with `OMNIMOD_API_KEY=<key> python3 test_omnimod.py`. Target: 27/27.

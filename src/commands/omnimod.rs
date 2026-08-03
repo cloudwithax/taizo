@@ -437,6 +437,7 @@ Output exactly one word, nothing else: ALLOW or ESCALATE";
             ],
             "temperature": 0.1,
             "max_tokens": 50,
+            "chat_template_kwargs": {"enable_thinking": false}
         });
 
         let response = self.client
@@ -555,6 +556,7 @@ If BAN confidence < 0.75, output REVIEW instead. No floor for CRISIS.";
             ],
             "temperature": 0.1,
             "max_tokens": 2000,
+            "chat_template_kwargs": {"enable_thinking": false}
         });
 
         let response = self.client
