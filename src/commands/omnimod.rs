@@ -72,53 +72,103 @@ struct RegexEntry {
 struct OmnimodState {
     keywords: Vec<KeywordEntry>,
     automaton: aho_corasick::AhoCorasick,
-    regex_patterns: Vec<RegexEntry>,
+    raw_regex_patterns: Vec<RegexEntry>,
+    normalized_regex_patterns: Vec<RegexEntry>,
 }
 
 fn get_keywords() -> Vec<KeywordEntry> {
     vec![
         KeywordEntry { keyword: "kill myself".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "end my life".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "end it all".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "end it".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "not worth it".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "better off dead".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "better off without me".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "wish i was dead".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "wish i wasnt born".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "wish i was never born".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "no one cares".to_string(), category: "self_harm_risk".to_string(), weight: 1.0 },
+        KeywordEntry { keyword: "nobody cares".to_string(), category: "self_harm_risk".to_string(), weight: 1.0 },
+        KeywordEntry { keyword: "nobody would notice".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "no one would notice".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "no one would miss me".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "nobody would miss me".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "everyone would be better off".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "i am a burden".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "burden to everyone".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "final goodbye".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "see you on the other side".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "giving up".to_string(), category: "self_harm_risk".to_string(), weight: 1.0 },
-        KeywordEntry { keyword: "can't go on".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "cant go on".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "over and out".to_string(), category: "self_harm_risk".to_string(), weight: 1.0 },
         KeywordEntry { keyword: "done with life".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
-        KeywordEntry { keyword: "don't have a reason".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
-        KeywordEntry { keyword: "i'll be gone".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
-        KeywordEntry { keyword: "you won't have to worry".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
-        KeywordEntry { keyword: "i won't be a problem".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
-        KeywordEntry { keyword: "i'll take care of it".to_string(), category: "self_harm_risk".to_string(), weight: 1.0 },
+        KeywordEntry { keyword: "done with everything".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "dont have a reason".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "ill be gone".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "i will be gone".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "you wont have to worry".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "i wont be a problem".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "ill take care of it".to_string(), category: "self_harm_risk".to_string(), weight: 1.0 },
+        KeywordEntry { keyword: "whats the point".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "what is the point anymore".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "made my peace".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "check out early".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "exit plan".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "go sleep forever".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "unalive myself".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "unalive".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "off myself".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "off yourself".to_string(), category: "encouraging_self_harm".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "take myself out".to_string(), category: "self_harm_risk".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "sewerslide".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "find some rope".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "best way to rope".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "how to hang".to_string(), category: "self_harm_risk".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "how many pills".to_string(), category: "supplying_method".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "lethal dose".to_string(), category: "supplying_method".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "how much to".to_string(), category: "supplying_method".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "deadly amount".to_string(), category: "supplying_method".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "method to".to_string(), category: "supplying_method".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "step by step".to_string(), category: "supplying_method".to_string(), weight: 1.0 },
+        KeywordEntry { keyword: "how much would be lethal".to_string(), category: "supplying_method".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "how many would it take".to_string(), category: "supplying_method".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "bus schedule".to_string(), category: "supplying_method".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "charcoal and".to_string(), category: "supplying_method".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "exhaust pipe".to_string(), category: "supplying_method".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "railroad tracks".to_string(), category: "supplying_method".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "i will kill you".to_string(), category: "threat".to_string(), weight: 2.0 },
-        KeywordEntry { keyword: "i'm going to find you".to_string(), category: "threat".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "im going to kill you".to_string(), category: "threat".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "im going to find you".to_string(), category: "threat".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "i know where you live".to_string(), category: "threat".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "i know your address".to_string(), category: "threat".to_string(), weight: 2.0 },
-        KeywordEntry { keyword: "i'll find you".to_string(), category: "threat".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "ill find you".to_string(), category: "threat".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "watch your back".to_string(), category: "threat".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "watch what happens".to_string(), category: "threat".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "youre dead".to_string(), category: "threat".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "you are dead".to_string(), category: "threat".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "im coming for you".to_string(), category: "threat".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "call the cops on".to_string(), category: "threat".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "send police to".to_string(), category: "threat".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "swat you".to_string(), category: "threat".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "swatted".to_string(), category: "threat".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "you should die".to_string(), category: "encouraging_self_harm".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "just die".to_string(), category: "encouraging_self_harm".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "go die".to_string(), category: "encouraging_self_harm".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "kill yourself".to_string(), category: "encouraging_self_harm".to_string(), weight: 2.0 },
-        KeywordEntry { keyword: "why don't you die".to_string(), category: "encouraging_self_harm".to_string(), weight: 2.0 },
-        KeywordEntry { keyword: "you'd be better off dead".to_string(), category: "encouraging_self_harm".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "kys".to_string(), category: "encouraging_self_harm".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "why dont you die".to_string(), category: "encouraging_self_harm".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "youd be better off dead".to_string(), category: "encouraging_self_harm".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "everyone dies".to_string(), category: "encouraging_self_harm".to_string(), weight: 1.0 },
+        KeywordEntry { keyword: "do the world a favor".to_string(), category: "encouraging_self_harm".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "do everyone a favor".to_string(), category: "encouraging_self_harm".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "just end it".to_string(), category: "encouraging_self_harm".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "you should go".to_string(), category: "encouraging_self_harm".to_string(), weight: 1.0 },
         KeywordEntry { keyword: "permanent solution".to_string(), category: "encouraging_self_harm".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "nobody would miss you".to_string(), category: "encouraging_self_harm".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "no one would miss you".to_string(), category: "encouraging_self_harm".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "go find some rope".to_string(), category: "encouraging_self_harm".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "go hang yourself".to_string(), category: "encouraging_self_harm".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "i know your phone".to_string(), category: "doxxing".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "your address is".to_string(), category: "doxxing".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "your workplace".to_string(), category: "doxxing".to_string(), weight: 1.5 },
@@ -127,135 +177,212 @@ fn get_keywords() -> Vec<KeywordEntry> {
         KeywordEntry { keyword: "your car".to_string(), category: "doxxing".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "license plate".to_string(), category: "doxxing".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "social security".to_string(), category: "doxxing".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "his name is".to_string(), category: "doxxing".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "her name is".to_string(), category: "doxxing".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "their name is".to_string(), category: "doxxing".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "works at".to_string(), category: "doxxing".to_string(), weight: 1.0 },
+        KeywordEntry { keyword: "lives on".to_string(), category: "doxxing".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "lives at".to_string(), category: "doxxing".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "goes to school at".to_string(), category: "doxxing".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "underage".to_string(), category: "minor_safety".to_string(), weight: 2.0 },
         KeywordEntry { keyword: "how old are you really".to_string(), category: "minor_safety".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "how old are u".to_string(), category: "minor_safety".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "where do you live minor".to_string(), category: "minor_safety".to_string(), weight: 2.0 },
-        KeywordEntry { keyword: "don't tell mods".to_string(), category: "minor_safety".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "dont tell mods".to_string(), category: "minor_safety".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "dont tell the mods".to_string(), category: "minor_safety".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "keep this between us".to_string(), category: "minor_safety".to_string(), weight: 1.0 },
-        KeywordEntry { keyword: "don't report this".to_string(), category: "minor_safety".to_string(), weight: 1.0 },
-        KeywordEntry { keyword: "don't tell anyone".to_string(), category: "minor_safety".to_string(), weight: 1.0 },
+        KeywordEntry { keyword: "dont report this".to_string(), category: "minor_safety".to_string(), weight: 1.0 },
+        KeywordEntry { keyword: "dont tell anyone".to_string(), category: "minor_safety".to_string(), weight: 1.0 },
         KeywordEntry { keyword: "off platform".to_string(), category: "minor_safety".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "move to discord".to_string(), category: "minor_safety".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "move to dm".to_string(), category: "minor_safety".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "move to dms".to_string(), category: "minor_safety".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "mods cant see".to_string(), category: "minor_safety".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "add me on".to_string(), category: "minor_safety".to_string(), weight: 1.0 },
         KeywordEntry { keyword: "hate you".to_string(), category: "hate".to_string(), weight: 1.0 },
-        KeywordEntry { keyword: "disgusting".to_string(), category: "hate".to_string(), weight: 0.5 },
-        KeywordEntry { keyword: "go die".to_string(), category: "hate".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "fucking die".to_string(), category: "hate".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "i hope you suffer".to_string(), category: "hate".to_string(), weight: 1.5 },
         KeywordEntry { keyword: "i hope you rot".to_string(), category: "hate".to_string(), weight: 1.5 },
+        KeywordEntry { keyword: "i hope you die".to_string(), category: "hate".to_string(), weight: 2.0 },
+        KeywordEntry { keyword: "rot in hell".to_string(), category: "hate".to_string(), weight: 1.0 },
     ]
 }
 
-fn get_regex_patterns() -> Vec<RegexEntry> {
+fn get_raw_regex_patterns() -> Vec<RegexEntry> {
     vec![
         RegexEntry {
-            pattern: regex::Regex::new(r"\b[a-z]\s*[._\-]\s*[a-z]\s*[._\-]\s*[a-z]\b").unwrap(),
+            pattern: regex::Regex::new(r"[\u{200B}\u{200C}\u{200D}\u{FEFF}\u{2060}\u{2061}\u{2062}\u{2063}\u{2064}]").unwrap(),
+            category: "evasion".to_string(),
+            weight: 2.5,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"[\u{0300}-\u{036F}]").unwrap(),
+            category: "evasion".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"[\u{0430}\u{0435}\u{043E}\u{0440}\u{0441}\u{0443}\u{0445}\u{0456}]").unwrap(),
             category: "evasion".to_string(),
             weight: 1.5,
         },
         RegexEntry {
-            pattern: regex::Regex::new(r"\b\w+1\w+1\w+\b").unwrap(),
+            pattern: regex::Regex::new(r"(?i)\b[kk]\s*[i1!ìíîïı]\s*[l1!|ℓ]\s*[l1!|ℓ]\b").unwrap(),
+            category: "evasion".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"(?i)\b[dð]\s*[i1!ìíîïı]\s*[e3èéêëę]\s*[a4àáâãäå@]\s*[dð]\b").unwrap(),
+            category: "evasion".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"(?i)\b[s5$]\s*[uùúûüů]\s*[c¢©k]\s*[i1!ìíîïı]\s*[dð]\s*[e3èéêëę]?\b").unwrap(),
+            category: "evasion".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"(?i)\b[s5$]\s*[e3èéêëę]\s*[l1!|ℓ]\s*[fƒ]\s*[- ]?\s*[h#ℎ]\s*[a4àáâãäå@]\s*[rʀ]\s*[mм]?\b").unwrap(),
+            category: "evasion".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"(?i)\b[rʀ]\s*[o0òóôõöø@]\s*[pρ]\s*[e3èéêëę]\b").unwrap(),
+            category: "self_harm_risk".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"(?i)\b[h#ℎ]\s*[a4àáâãäå@]\s*[nñи]\s*[g9ɡĝ]\b").unwrap(),
+            category: "self_harm_risk".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"🔪|💀|☠️|🪢|💊|🔫|⚰️|🪦").unwrap(),
+            category: "evasion".to_string(),
+            weight: 1.5,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"(?i)\bk[i1!ìíîïı][l1!|ℓ][l1!|ℓ]\s*(?:y[o0òóôõöø@]u[rʀ]?[s5$][e3èéêëę]lf|u[rʀ]?self)\b").unwrap(),
+            category: "encouraging_self_harm".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"(?i)\b(?:k|k1|ky)[s5$]\b").unwrap(),
+            category: "encouraging_self_harm".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b\d{1,5}\s+(?:north|south|east|west|[NSEW]\.?)\s+[a-zA-Z]+\s+(?:st|street|ave|avenue|blvd|boulevard|dr|drive|rd|road|ln|lane|ct|court|pl|place|way|cir|circle|ter|terrace|pkwy|parkway)\b").unwrap(),
+            category: "doxxing".to_string(),
+            weight: 2.5,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b").unwrap(),
+            category: "doxxing".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b").unwrap(),
+            category: "doxxing".to_string(),
+            weight: 2.5,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b").unwrap(),
+            category: "doxxing".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}").unwrap(),
+            category: "doxxing".to_string(),
+            weight: 1.5,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b[A-Z]{1,3}[- ]?\d{2,4}[- ]?[A-Z]{0,3}\b").unwrap(),
+            category: "doxxing".to_string(),
+            weight: 1.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"(?i)(?:bit\.ly|tinyurl\.com|t\.co|goo\.gl|is\.gd|cutt\.ly|ow\.ly|rebrand\.ly|shorturl\.at)/\S+").unwrap(),
+            category: "evasion".to_string(),
+            weight: 1.5,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"(?i)(?:0x[0-9a-f]{4,}|[A-Za-z0-9+/]{20,}={0,2})").unwrap(),
             category: "evasion".to_string(),
             weight: 1.0,
         },
         RegexEntry {
-            pattern: regex::Regex::new(r"\b\w+[^a-zA-Z]+\w+[^a-zA-Z]+\w+\b").unwrap(),
-            category: "evasion".to_string(),
-            weight: 1.0,
-        },
-        RegexEntry {
-            pattern: regex::Regex::new(r"\b(k|K)(i|1|!)(l|1|!)(l|1|!)\b").unwrap(),
-            category: "evasion".to_string(),
+            pattern: regex::Regex::new(r"(?i)\b(d|d0|d0x)(o|0)(x|xx|xing|xxed)\b").unwrap(),
+            category: "doxxing".to_string(),
             weight: 2.0,
         },
         RegexEntry {
-            pattern: regex::Regex::new(r"\b(d|D)(i|1|!)(e|3)(a|4|@)(d|D)\b").unwrap(),
-            category: "evasion".to_string(),
+            pattern: regex::Regex::new(r"(?i)\b[s5$][wω][a4àáâãäå@][t7][t7]\b").unwrap(),
+            category: "threat".to_string(),
+            weight: 2.0,
+        },
+    ]
+}
+
+fn get_normalized_regex_patterns() -> Vec<RegexEntry> {
+    vec![
+        RegexEntry {
+            pattern: regex::Regex::new(r"\bkill\s+(?:my|your|him|her|them|ur|his|hers|their)\s*self\b").unwrap(),
+            category: "self_harm_risk".to_string(),
             weight: 2.0,
         },
         RegexEntry {
-            pattern: regex::Regex::new(r"\b(s|5)(e|3)(l|1)(f|ph)(-| )?(h|#|h)(a|4|@)(r|1|!)(m|m)\b").unwrap(),
-            category: "evasion".to_string(),
+            pattern: regex::Regex::new(r"\b(?:how many|how much)\s+\w+\s+(?:would|will|does|do)\s+(?:it take|be lethal|kill|be enough|be fatal)\b").unwrap(),
+            category: "supplying_method".to_string(),
             weight: 2.0,
         },
         RegexEntry {
-            pattern: regex::Regex::new(r"\b(m|m)(e|3)(t|\+|h)o(d|0|0)(o|0|q)(d|d)\b").unwrap(),
+            pattern: regex::Regex::new(r"\b(?:best|easiest|quickest|fastest|most effective)\s+(?:way|method|means)\s+(?:to|of)\b").unwrap(),
             category: "supplying_method".to_string(),
             weight: 1.5,
         },
         RegexEntry {
-            pattern: regex::Regex::new(r"\b(d|D)(o|0|o)(s|5|z)(e|3|@)(x|x)(i|1|!)(n|\\)(g|9)\b").unwrap(),
-            category: "doxxing".to_string(),
+            pattern: regex::Regex::new(r"\b(?:lethal|fatal|deadly)\s+(?:dose|amount|quantity)\b").unwrap(),
+            category: "supplying_method".to_string(),
             weight: 2.0,
         },
         RegexEntry {
-            pattern: regex::Regex::new(r"\b(\d{3})[-.\s]?\d{3}[-.\s]?\d{4}\b").unwrap(),
-            category: "doxxing".to_string(),
+            pattern: regex::Regex::new(r"\bi\s+(?:will|am going to|gonna|will)\s+(?:kill|murder|shoot|stab|hurt|harm)\s+you\b").unwrap(),
+            category: "threat".to_string(),
             weight: 2.0,
         },
         RegexEntry {
-            pattern: regex::Regex::new(r"\b\d{5}(-\d{4})?\b").unwrap(),
-            category: "doxxing".to_string(),
-            weight: 1.5,
-        },
-        RegexEntry {
-            pattern: regex::Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b").unwrap(),
-            category: "doxxing".to_string(),
-            weight: 1.5,
-        },
-        RegexEntry {
-            pattern: regex::Regex::new(r"\b(h|#)(e|3|€)(l|1|!)(l|1|!)(o|0|O)\b").unwrap(),
-            category: "evasion".to_string(),
-            weight: 1.0,
-        },
-        RegexEntry {
-            pattern: regex::Regex::new(r"\b(s|c|§)(a|4|@)(f|ph)(e|3|€)\b").unwrap(),
-            category: "evasion".to_string(),
-            weight: 1.0,
-        },
-        RegexEntry {
-            pattern: regex::Regex::new(r"\b(p|ph)(i|1|!)(l|1|!)(l|1|!)\b").unwrap(),
-            category: "self_harm_risk".to_string(),
+            pattern: regex::Regex::new(r"\bi\s+know\s+(?:where|what)\s+you\s+(?:live|are|work|go)\b").unwrap(),
+            category: "threat".to_string(),
             weight: 2.0,
         },
         RegexEntry {
-            pattern: regex::Regex::new(r"\b(o|0)v(e|3|€)(r)(s|5|z)(i|1|!)(d|D)(e|3|€)\b").unwrap(),
-            category: "self_harm_risk".to_string(),
-            weight: 2.0,
-        },
-        RegexEntry {
-            pattern: regex::Regex::new(r"\b(s|5|\$)u(i|1|!)(c|k)(i|1|!)(d|D|)\b").unwrap(),
-            category: "self_harm_risk".to_string(),
-            weight: 2.0,
-        },
-        RegexEntry {
-            pattern: regex::Regex::new(r"\b(s|5|\$)l(i|1|!)t(s|5|\$)er\b").unwrap(),
-            category: "evasion".to_string(),
-            weight: 1.5,
-        },
-        RegexEntry {
-            pattern: regex::Regex::new(r"\b(c|k)(i|1|!)(l|1|!)(l|1|!)(i|1|!)n(g|9)\b").unwrap(),
-            category: "self_harm_risk".to_string(),
-            weight: 2.0,
-        },
-        RegexEntry {
-            pattern: regex::Regex::new(r"\b(f|ph)(l|1|!)(u|ü|v)(c|k)(k|)(i|1|!)n(g|9)\b").unwrap(),
-            category: "evasion".to_string(),
-            weight: 1.5,
-        },
-        RegexEntry {
-            pattern: regex::Regex::new(r"\b(m|w)h(a|4|@)(t(s|5|z))(a|4|@)(p|ph)(p|)\b").unwrap(),
+            pattern: regex::Regex::new(r"\b(?:how old|what age)\s+(?:are you|r u|ru)\b").unwrap(),
             category: "minor_safety".to_string(),
             weight: 1.5,
         },
         RegexEntry {
-            pattern: regex::Regex::new(r"\b(t|7)(e|3|€)(l|1|!)(e|3|€)(g|9)(r|1|!)a(m|m)\b").unwrap(),
+            pattern: regex::Regex::new(r"\b(?:add me|dm me|message me)\s+(?:on|in)\s+(?:discord|snap|insta|snapchat|telegram|whatsapp|signal)\b").unwrap(),
             category: "minor_safety".to_string(),
             weight: 1.5,
         },
         RegexEntry {
-            pattern: regex::Regex::new(r"\b(s|5|c)(p|ph)(e|3|€)(a|4|@)(r|1|!)(k|)(i|1|!)n(g|9)\b").unwrap(),
+            pattern: regex::Regex::new(r"\b(?:dont|don t|do not)\s+(?:tell|report)\s+(?:the\s+)?(?:mods|moderators|admin|admins|staff)\b").unwrap(),
             category: "minor_safety".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b(?:send|call)\s+(?:the\s+)?(?:police|cops|swat|fbi)\s+(?:to|on|at)\b").unwrap(),
+            category: "threat".to_string(),
+            weight: 2.0,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b(?:works at|goes to|lives at|lives on)\s+\w+\s+\w+\b").unwrap(),
+            category: "doxxing".to_string(),
+            weight: 1.5,
+        },
+        RegexEntry {
+            pattern: regex::Regex::new(r"\b(?:his|her|their)\s+(?:name|real name)\s+is\s+\w+\b").unwrap(),
+            category: "doxxing".to_string(),
             weight: 1.5,
         },
     ]
@@ -264,12 +391,75 @@ fn get_regex_patterns() -> Vec<RegexEntry> {
 fn normalize_text(text: &str) -> String {
     let text = text.to_lowercase();
     let text: String = text.chars().map(|c| match c {
-        '1' => 'i',
-        '3' => 'e',
-        '4' => 'a',
-        '5' => 's',
+        '1' | '!' | '|' | '¡' | 'ℓ' => 'i',
+        '3' | '€' => 'e',
+        '4' | '@' => 'a',
+        '5' | '$' => 's',
         '7' => 't',
-        '0' => 'o',
+        '0' | '°' => 'o',
+        '8' => 'b',
+        '9' | 'ɡ' | 'ĝ' => 'g',
+        '2' | 'z' => 'z',
+        '6' => 'b',
+        '\u{0430}' => 'a',
+        '\u{0435}' => 'e',
+        '\u{043E}' => 'o',
+        '\u{0440}' => 'p',
+        '\u{0441}' => 'c',
+        '\u{0443}' => 'y',
+        '\u{0445}' => 'x',
+        '\u{0456}' => 'i',
+        '\u{0458}' => 'j',
+        '\u{04BB}' => 'h',
+        '\u{0455}' => 's',
+        '\u{0442}' => 't',
+        '\u{043C}' => 'm',
+        '\u{043F}' => 'n',
+        '\u{0432}' => 'b',
+        '\u{043A}' => 'k',
+        '\u{0434}' => 'd',
+        '\u{0444}' => 'f',
+        '\u{0433}' => 'g',
+        '\u{043B}' => 'l',
+        '\u{0438}' => 'u',
+        '\u{043D}' => 'h',
+        '\u{0446}' => 'c',
+        '\u{0447}' => 'c',
+        '\u{0448}' => 'w',
+        '\u{0449}' => 'w',
+        '\u{044F}' => 'a',
+        '\u{044E}' => 'u',
+        '\u{044B}' => 'y',
+        '\u{044D}' => 'e',
+        '\u{0457}' => 'i',
+        '\u{0454}' => 'e',
+        '\u{0491}' => 'g',
+        '\u{045E}' => 'y',
+        '\u{0406}' => 'i',
+        '\u{0407}' => 'i',
+        '\u{0404}' => 'e',
+        '\u{0490}' => 'g',
+        '\u{040E}' => 'y',
+        '\u{0401}' => 'e',
+        '\u{0436}' => 'z',
+        '\u{0437}' => 'z',
+        'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'æ' | 'ą' => 'a',
+        'è' | 'é' | 'ê' | 'ë' | 'ę' => 'e',
+        'ì' | 'í' | 'î' | 'ï' | 'ı' => 'i',
+        'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' => 'o',
+        'ù' | 'ú' | 'û' | 'ü' | 'ů' => 'u',
+        'ñ' => 'n',
+        'ð' => 'd',
+        'þ' => 't',
+        'ß' => 's',
+        'ç' | '¢' | '©' => 'c',
+        'ƒ' => 'f',
+        'μ' => 'u',
+        'π' => 'p',
+        'ω' => 'w',
+        'ρ' => 'p',
+        'ʀ' => 'r',
+        'ℎ' => 'h',
         _ => c,
     }).collect();
     let text: String = text.chars().map(|c| if c.is_alphanumeric() || c == ' ' { c } else { ' ' }).collect();
@@ -286,11 +476,13 @@ fn get_automaton() -> aho_corasick::AhoCorasick {
 fn get_state() -> Arc<RwLock<OmnimodState>> {
     let keywords = get_keywords();
     let automaton = get_automaton();
-    let regex_patterns = get_regex_patterns();
+    let raw_regex_patterns = get_raw_regex_patterns();
+    let normalized_regex_patterns = get_normalized_regex_patterns();
     Arc::new(RwLock::new(OmnimodState {
         keywords,
         automaton,
-        regex_patterns,
+        raw_regex_patterns,
+        normalized_regex_patterns,
     }))
 }
 
@@ -304,6 +496,17 @@ pub async fn run_pre_stage(text: &str, threshold: f64) -> PreStageResult {
     let mut matches = Vec::new();
     let mut score = 0.0;
 
+    for re in &state.raw_regex_patterns {
+        if re.pattern.is_match(text) {
+            score += re.weight;
+            matches.push(PatternMatch {
+                category: re.category.clone(),
+                weight: re.weight,
+                matched: re.pattern.as_str().to_string(),
+            });
+        }
+    }
+
     for mat in state.automaton.find_iter(&normalized) {
         let pattern = &state.keywords[mat.pattern()];
         score += pattern.weight;
@@ -314,7 +517,7 @@ pub async fn run_pre_stage(text: &str, threshold: f64) -> PreStageResult {
         });
     }
 
-    for re in &state.regex_patterns {
+    for re in &state.normalized_regex_patterns {
         if re.pattern.is_match(&normalized) {
             score += re.weight;
             matches.push(PatternMatch {
@@ -358,6 +561,7 @@ fn is_obfuscation_char(c: char) -> bool {
         | '\u{20E3}'
         | '\u{FEFF}'
         | '\u{0300}'..='\u{036F}'
+        | '\u{2060}'..='\u{2064}'
     )
 }
 
