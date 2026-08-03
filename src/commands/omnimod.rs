@@ -4,7 +4,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-const NOVITA_BASE_URL: &str = "https://api.novita.ai/openai/v1/chat/completions";
+const OMNIMOD_BASE_URL: &str = "https://omnimodapi.clxud.dev/v1/chat/completions";
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -25,8 +25,8 @@ impl OmnimodConfig {
             guild_id,
             enabled: false,
             pre_stage_threshold: 0.5,
-            stage1_model: "meta-llama/llama-3.1-8b-instruct".to_string(),
-            stage2_model: "deepseek/deepseek-v4-flash-0731".to_string(),
+            stage1_model: "/home/clxud/models/Qwen3.5-4B-Q4_K_M.gguf".to_string(),
+            stage2_model: "/home/clxud/models/Qwen3.5-4B-Q4_K_M.gguf".to_string(),
             stage1_confidence_threshold: 0.5,
             stage2_confidence_threshold: 0.75,
             log_channel_id: None,
@@ -405,7 +405,7 @@ impl NovitaClient {
     }
 
     pub async fn call_stage1(&self, message: &str) -> Result<String, Error> {
-        let model = "meta-llama/llama-3.1-8b-instruct";
+        let model = "/home/clxud/models/Qwen3.5-4B-Q4_K_M.gguf";
         let system_prompt = "You are a triage filter for a chat community. You do not punish anyone. You decide only whether a human-grade reviewer should look at a message.
 
 You are looking for messages that LOOK clean on the surface but are not. Clean vocabulary is not evidence of innocence. Judge what the message is DOING, not which words it contains.
@@ -437,11 +437,10 @@ Output exactly one word, nothing else: ALLOW or ESCALATE";
             ],
             "temperature": 0.1,
             "max_tokens": 50,
-            "enable_thinking": false,
         });
 
         let response = self.client
-            .post(NOVITA_BASE_URL)
+            .post(OMNIMOD_BASE_URL)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&body)
@@ -465,7 +464,7 @@ Output exactly one word, nothing else: ALLOW or ESCALATE";
     }
 
     pub async fn call_stage2(&self, message: &str) -> Result<StageResult, Error> {
-        let model = "deepseek/deepseek-v4-flash-0731";
+        let model = "/home/clxud/models/Qwen3.5-4B-Q4_K_M.gguf";
         let system_prompt = "You are the adjudicating moderator for a chat community. A cheap filter flagged this message; most flags are false alarms, so do not assume guilt. Your specialty is implicit harm — messages with no slurs, no explicit threats, and no obvious rule-breaking words whose actual function is to wound, to encourage harm, or to evade moderation.
 
 ## Language
@@ -556,11 +555,10 @@ If BAN confidence < 0.75, output REVIEW instead. No floor for CRISIS.";
             ],
             "temperature": 0.1,
             "max_tokens": 2000,
-            "enable_thinking": false,
         });
 
         let response = self.client
-            .post(NOVITA_BASE_URL)
+            .post(OMNIMOD_BASE_URL)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&body)
@@ -778,13 +776,13 @@ pub async fn handle_message(
         None,
     ).await;
 
-    let api_key = match std::env::var("NOVITA_KEY") {
-        Ok(k) if !k.is_empty() => k,
-        _ => {
-            tracing::info!("omnimod: NOVITA_KEY not set, skipping LLM stages");
-            return;
-        }
-    };
+let api_key = match std::env::var("OMNIMOD_API_KEY") {
+            Ok(k) if !k.is_empty() => k,
+            _ => {
+                tracing::info!("omnimod: OMNIMOD_API_KEY not set, skipping LLM stages");
+                return;
+            }
+        };
 
     let client = NovitaClient::new(api_key);
     let message_text = msg.content.clone();
@@ -1333,7 +1331,7 @@ pub async fn test(
     }
 
     if pre_result.flagged {
-        if let Ok(api_key) = std::env::var("NOVITA_KEY") {
+        if let Ok(api_key) = std::env::var("OMNIMOD_API_KEY") {
             if !api_key.is_empty() {
                 let client = NovitaClient::new(api_key);
                 match client.call_stage1(&message).await {
@@ -1359,10 +1357,10 @@ pub async fn test(
                     }
                 }
             } else {
-                description.push_str("stage1/stage2: skipped (no novita key in env)\n");
+                description.push_str("stage1/stage2: skipped (no omnimod api key in env)\n");
             }
         } else {
-            description.push_str("stage1/stage2: skipped (no novita key in env)\n");
+            description.push_str("stage1/stage2: skipped (no omnimod api key in env)\n");
         }
     }
 
