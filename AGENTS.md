@@ -53,8 +53,27 @@ Register in `main.rs` under `framework.options().commands`. Each module lives in
 - `fun.rs` — say, choose, hug, kiss, embed, poll, snipe, reddit, owoify, etc.
 - `info.rs` — about, uptime, invite, privacy, vote, support
 - `moderation.rs` — ban, kick, mute, warn, purge, setwelcome/setleave
+- `omnimod.rs` — AI-powered text moderation (omnimod) + image NSFW classification
 - `owner.rs` — restart, stop (owner only)
 - `utility.rs` — help (paginated buttons), ping, serverinfo, userinfo, avatar, whois
+
+## Image Classifier
+
+- Model: `models/model.onnx` (89MB, converted from bonker-js tfjs via h5 → ONNX)
+- Runtime: `tract-onnx` (pure Rust, no system deps)
+- Preprocessing: bilinear resize with align_corners to 299×299, /255 normalization
+- Classification: hentai + porn > 0.5 threshold (matches bonker-js behavior)
+- GIF support: decodes up to 10 frames, flags if any frame exceeds threshold
+- Integrated into `omnimod::handle_message` — classifies image attachments when omnimod is enabled
+
+## Tract-ONNX Pitfalls
+
+- `RunnableModel` is a type alias for `SimplePlan<F, O>` requiring 2 generic params
+- `into_runnable()` returns `Arc<RunnableModel<F, O>>`, not the raw type
+- `Runnable` trait is implemented for `Arc<TypedRunnableModel>`, not for `&T`
+- For ONNX models: use `Arc<TypedRunnableModel>` (aka `Arc<RunnableModel<TypedFact, Box<dyn TypedOp>>`)
+- `TypedRunnableModel` is in `tract_core::model::typed` but accessible via `tract_onnx::prelude::*`
+- GIF frames from `image` crate are RGBA; convert to RGB before classification
 
 ## Conventions
 
