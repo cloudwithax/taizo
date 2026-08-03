@@ -957,6 +957,45 @@ pub async fn handle_message(
     }
 
     let content = msg.content.trim();
+
+    if !msg.attachments.is_empty() && crate::image_classifier::CLASSIFIER.is_some() {
+        for attachment in &msg.attachments {
+            if let Ok(response) = reqwest::get(&attachment.url).await {
+                if let Ok(bytes) = response.bytes().await {
+                    let is_gif = attachment.filename.to_lowercase().ends_with(".gif");
+                    let result = if is_gif {
+                        crate::image_classifier::classify_gif(&bytes)
+                    } else {
+                        crate::image_classifier::classify_image(&bytes)
+                    };
+                    if let Ok(result) = result {
+                        tracing::info!("omnimod: image classification: {} (score: {:.3})", result.dominant_class, result.nsfw_score);
+                        if result.is_nsfw {
+                            let _ = msg.delete(http).await;
+                            let _ = log_omnimod_flag(
+                                db,
+                                guild_id,
+                                msg.channel_id.get() as i64,
+                                msg.id.get() as i64,
+                                msg.author.id.get() as i64,
+                                content,
+                                "image",
+                                Some(&result.dominant_class),
+                                Some(result.nsfw_score as f64),
+                                Some(&format!("nsfw image: {} (score: {:.3})", result.dominant_class, result.nsfw_score)),
+                                Some("image_nsfw_deleted"),
+                            ).await;
+                            if let Some(log_channel_id) = config.log_channel_id {
+                                let _ = send_image_log_embed(http, log_channel_id, msg, &result, attachment).await;
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if content.is_empty() {
         return;
     }
@@ -1089,43 +1128,6 @@ let api_key = match std::env::var("OMNIMOD_API_KEY") {
 
     if let Some(log_channel_id) = config.log_channel_id {
         let _ = send_log_embed(http, log_channel_id, msg, &stage2_result, &pre_result, case_number, action_taken).await;
-    }
-
-    if !msg.attachments.is_empty() && crate::image_classifier::CLASSIFIER.is_some() {
-        for attachment in &msg.attachments {
-            if let Ok(response) = reqwest::get(&attachment.url).await {
-                if let Ok(bytes) = response.bytes().await {
-                    let is_gif = attachment.filename.to_lowercase().ends_with(".gif");
-                    let result = if is_gif {
-                        crate::image_classifier::classify_gif(&bytes)
-                    } else {
-                        crate::image_classifier::classify_image(&bytes)
-                    };
-                    if let Ok(result) = result {
-                        if result.is_nsfw {
-                            let _ = msg.delete(http).await;
-                            let _ = log_omnimod_flag(
-                                db,
-                                guild_id,
-                                msg.channel_id.get() as i64,
-                                msg.id.get() as i64,
-                                msg.author.id.get() as i64,
-                                content,
-                                "image",
-                                Some(&result.dominant_class),
-                                Some(result.nsfw_score as f64),
-                                Some(&format!("nsfw image: {} (score: {:.3})", result.dominant_class, result.nsfw_score)),
-                                Some("image_nsfw_deleted"),
-                            ).await;
-                            if let Some(log_channel_id) = config.log_channel_id {
-                                let _ = send_image_log_embed(http, log_channel_id, msg, &result, attachment).await;
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
