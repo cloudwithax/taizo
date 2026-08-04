@@ -53,7 +53,7 @@ Register in `main.rs` under `framework.options().commands`. Each module lives in
 - `fun.rs` — say, choose, hug, kiss, embed, poll, snipe, reddit, owoify, etc.
 - `info.rs` — about, uptime, invite, privacy, vote, support
 - `moderation.rs` — ban, kick, mute, warn, purge, setwelcome/setleave
-- `omnimod.rs` — AI-powered text moderation (omnimod) + image NSFW classification
+- `omnimod.rs` — AI-powered text moderation (omnimod) + image NSFW classification + OCR text extraction
 - `owner.rs` — restart, stop (owner only)
 - `utility.rs` — help (paginated buttons), ping, serverinfo, userinfo, avatar, whois
 
@@ -65,6 +65,25 @@ Register in `main.rs` under `framework.options().commands`. Each module lives in
 - Classification: hentai + porn > 0.5 threshold (matches bonker-js behavior)
 - GIF support: decodes up to 10 frames, flags if any frame exceeds threshold
 - Integrated into `omnimod::handle_message` — classifies image attachments when omnimod is enabled
+
+## OCR (Optical Character Recognition)
+
+- Runtime: `rusty-tesseract` (wrapper around Tesseract OCR binary)
+- System dependency: requires `tesseract` binary installed (v5.5.0+)
+- Extracts text from images and GIFs (up to 10 frames)
+- Extracted text runs through pre-stage moderation
+- If flagged, escalates to LLM (stage1/stage2) for nuanced review
+- Results logged with `ocr_pre_stage` and `ocr_stage2` stage labels
+- Actions: `ocr_banned_and_deleted`, `ocr_message_deleted`, `ocr_crisis_dm_sent`, `ocr_logged_for_review`
+- Runs independently of NSFW classification — both checks happen on every image
+
+## OCR Pitfalls
+
+- **Tesseract binary required**: `rusty-tesseract` shells out to the `tesseract` binary. Must be installed system-wide (`apt install tesseract-ocr` or equivalent).
+- **PSM and OEM modes**: Use PSM 6 (uniform block of text) and OEM 3 (default engine) for best results on Discord screenshots.
+- **GIF frame limit**: Only processes first 10 frames to avoid performance issues on long GIFs.
+- **Empty text handling**: If OCR returns empty string, skips moderation pipeline (no false positives on images without text).
+- **Performance**: OCR is synchronous and can be slow on large images. Consider running in `tokio::task::spawn_blocking` if latency becomes an issue.
 
 ## Tract-ONNX Pitfalls
 
