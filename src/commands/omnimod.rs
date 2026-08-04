@@ -976,23 +976,25 @@ If BAN confidence < 0.75, output REVIEW instead. No floor for CRISIS.";
 
     pub async fn call_stage1_with_image(&self, message: &str, image_base64: &str) -> Result<String, Error> {
         let model = "/home/clxud/models/Qwen3.5-4B-Q4_K_M.gguf";
-        let system_prompt = "You are a multimodal content moderator. You analyze images and text together to determine if the content violates community rules. You do not punish anyone. You decide only whether a human-grade reviewer should look at the content.
+        let system_prompt = "You are an image content reviewer for a Discord community moderation system. You receive images that an NSFW classifier has flagged as borderline.
 
-You are looking for content that LOOKS clean on the surface but is not. Clean vocabulary is not evidence of innocence. Judge what the content is DOING, not which words it contains.
+Your ONLY job: determine if this image contains nudity, sexual activity, pornographic content, or hentai.
 
-Look at the image carefully. Check for:
-- Nudity or sexual content
-- Pornographic or hentai imagery
-- Violent or gory content
-- Hate symbols or imagery
-- Illegal or dangerous content
-- Any content that would be inappropriate in a community setting
+RULES:
+- Anime, manga, drawings, illustrations of sexual acts = ESCALATE
+- Visible genitalia, penetration, oral sex, masturbation = ESCALATE
+- Nude or partially nude characters in sexual poses = ESCALATE
+- Characters with exposed breasts, buttocks, or genitalia = ESCALATE
+- Sexual fluids, cum, or sexual substances visible = ESCALATE
+- Any content that would be considered pornographic = ESCALATE
 
-If the image is clearly safe and the text is benign, ALLOW.
-If the image or text combined suggest something harmful, ESCALATE.
-When in doubt, ESCALATE.
+The ONLY case for ALLOW:
+- The image is completely non-sexual (landscape, object, clothed person in non-sexual context)
+- Artistic nudity that is clearly non-sexual (medical illustration, classical art without sexual activity)
 
-Output exactly one word, nothing else: ALLOW or ESCALATE";
+When in doubt, ALWAYS ESCALATE. A false positive is acceptable. Missing porn is not.
+
+Output exactly one word: ALLOW or ESCALATE";
 
         let body = serde_json::json!({
             "model": model,
@@ -1003,8 +1005,8 @@ Output exactly one word, nothing else: ALLOW or ESCALATE";
                     {"type": "image_url", "image_url": {"url": format!("data:image/jpeg;base64,{}", image_base64)}}
                 ]}
             ],
-            "temperature": 0.1,
-            "max_tokens": 50,
+            "temperature": 0.0,
+            "max_tokens": 10,
             "chat_template_kwargs": {"enable_thinking": false}
         });
 
@@ -1017,18 +1019,26 @@ Output exactly one word, nothing else: ALLOW or ESCALATE";
             .await?;
 
         let text = response.text().await?;
-        let parsed: NovitaResponse = serde_json::from_str(&text)?;
-        let msg = parsed.choices.first().map(|c| &c.message);
-        let content = msg
-            .and_then(|m| m.content.as_deref().or(m.reasoning_content.as_deref()))
-            .unwrap_or("")
-            .trim()
-            .to_uppercase();
+        let parsed: Result<NovitaResponse, _> = serde_json::from_str(&text);
+        match parsed {
+            Ok(parsed) => {
+                let msg = parsed.choices.first().map(|c| &c.message);
+                let content = msg
+                    .and_then(|m| m.content.as_deref().or(m.reasoning_content.as_deref()))
+                    .unwrap_or("")
+                    .trim()
+                    .to_uppercase();
 
-        if content.contains("ESCALATE") {
-            Ok("ESCALATE".to_string())
-        } else {
-            Ok("ALLOW".to_string())
+                if content.contains("ESCALATE") {
+                    Ok("ESCALATE".to_string())
+                } else {
+                    Ok("ALLOW".to_string())
+                }
+            }
+            Err(e) => {
+                tracing::warn!("omnimod: image LLM stage1 parse error: {} response: {}", e, text);
+                Ok("ALLOW".to_string())
+            }
         }
     }
 }
@@ -1230,7 +1240,7 @@ if result.is_nsfw {
                          }
                          
                          // Score below threshold but not negligible — send to LLM for multimodal review
-                         if result.nsfw_score >= 0.01 && result.nsfw_score < 0.5 {
+                         if result.nsfw_score >= 0.01 && result.nsfw_score < 0.4 {
                              if let Ok(api_key) = std::env::var("OMNIMOD_API_KEY") {
                                  if !api_key.is_empty() {
                                      if let Ok(base64_image) = image_to_jpeg_base64(&bytes) {

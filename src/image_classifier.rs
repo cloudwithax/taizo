@@ -5,7 +5,7 @@ use tract_onnx::prelude::*;
 
 const MODEL_PATH: &str = "models/model.onnx";
 const INPUT_SIZE: usize = 299;
-const NSFW_THRESHOLD: f32 = 0.5;
+const NSFW_THRESHOLD: f32 = 0.4;
 
 pub struct NsfwResult {
     pub is_nsfw: bool,
