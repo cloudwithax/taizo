@@ -974,6 +974,91 @@ If BAN confidence < 0.75, output REVIEW instead. No floor for CRISIS.";
         parse_stage2_output(&content)
     }
 
+    pub async fn call_stage2_with_image(&self, message: &str, image_base64: &str) -> Result<StageResult, Error> {
+        let model = "/home/clxud/models/Qwen3.5-4B-Q4_K_M.gguf";
+        let system_prompt = "You are an image content adjudicator for a Discord community moderation system. A triage filter has flagged this image as potentially violating community rules. You must decide the final action.
+
+You WILL see the image. Judge it directly.
+
+## What to check
+
+1. Does the image contain nudity, sexual activity, pornographic content, or hentai?
+2. Does the image contain violence, gore, or illegal content?
+3. Is the content clearly intended for sexual gratification?
+
+## Labels
+
+- ALLOW — non-sexual, artistic, clothed, landscape, object, safe content
+- REVIEW — ambiguous, could go either way, need human eyes
+- REMOVE — violating but no evident malice. Delete, no ban.
+- BAN — deliberate, severe pornographic or illegal content
+- CRISIS — author at risk. Support route, not punishment.
+
+## Confidence
+
+Output a JSON object: {\"label\":\"...\",\"confidence\":0.0,\"category\":\"...\",\"target\":\"...\",\"reason\":\"...\"}
+
+If confidence < 0.75 for BAN, output REVIEW instead.";
+
+        let body = serde_json::json!({
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": [
+                    {"type": "text", "text": message},
+                    {"type": "image_url", "image_url": {"url": format!("data:image/jpeg;base64,{}", image_base64)}}
+                ]}
+            ],
+            "temperature": 0.1,
+            "max_tokens": 2000,
+            "chat_template_kwargs": {"enable_thinking": false}
+        });
+
+        let response = self.client
+            .post(OMNIMOD_BASE_URL)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+
+        let text = response.text().await?;
+        let parsed: Result<NovitaResponse, _> = serde_json::from_str(&text);
+        match parsed {
+            Ok(parsed) => {
+                let msg = parsed.choices.first().map(|c| &c.message);
+                let content = msg
+                    .and_then(|m| m.content.as_deref().filter(|s| !s.is_empty()))
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+
+                if content.is_empty() {
+                    tracing::warn!("omnimod: image stage2 returned empty content");
+                    return Ok(StageResult {
+                        label: "REVIEW".to_string(),
+                        confidence: 0.5,
+                        category: "empty_model_output".to_string(),
+                        target: "none".to_string(),
+                        reason: "model returned no verdict".to_string(),
+                    });
+                }
+
+                parse_stage2_output(&content)
+            }
+            Err(e) => {
+                tracing::warn!("omnimod: image stage2 parse error: {} response: {}", e, text);
+                Ok(StageResult {
+                    label: "REVIEW".to_string(),
+                    confidence: 0.5,
+                    category: "parse_error".to_string(),
+                    target: "none".to_string(),
+                    reason: "failed to parse model output".to_string(),
+                })
+            }
+        }
+    }
+
     pub async fn call_stage1_with_image(&self, message: &str, image_base64: &str) -> Result<String, Error> {
         let model = "/home/clxud/models/Qwen3.5-4B-Q4_K_M.gguf";
         let system_prompt = "You are an image content reviewer for a Discord community moderation system. You receive images that an NSFW classifier has flagged as borderline.
@@ -1252,8 +1337,8 @@ if result.is_nsfw {
                                                  tracing::info!("omnimod: image LLM review: {}", llm_result);
                                                  
                                                  if llm_result == "ESCALATE" {
-                                                     // Run stage2 for adjudication
-                                                     match client.call_stage2(&image_message).await {
+                                                     // Run stage2 for adjudication (with image)
+                                                     match client.call_stage2_with_image(&image_message, &base64_image).await {
                                                          Ok(stage2_result) => {
                                                              tracing::info!("omnimod: image LLM stage2={} confidence={:.2}", stage2_result.label, stage2_result.confidence);
                                                              
