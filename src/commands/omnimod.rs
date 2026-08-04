@@ -976,22 +976,53 @@ If BAN confidence < 0.75, output REVIEW instead. No floor for CRISIS.";
 
     pub async fn call_stage2_with_image(&self, message: &str, image_base64: &str) -> Result<StageResult, Error> {
         let model = "/home/clxud/models/Qwen3.5-4B-Q4_K_M.gguf";
-        let system_prompt = "You are an image content adjudicator for a Discord community moderation system. A triage filter has flagged this image as potentially violating community rules. You must decide the final action.
+        let system_prompt = "You are an image content adjudicator for a Discord community moderation system. A triage filter has flagged this image. You must decide the final action.
 
-You WILL see the image. Judge it directly.
+You WILL see the image. Judge it directly against ALL community rules.
 
 ## What to check
 
-1. Does the image contain nudity, sexual activity, pornographic content, or hentai?
-2. Does the image contain violence, gore, or illegal content?
-3. Is the content clearly intended for sexual gratification?
+### Sexual content
+- Nudity: exposed genitalia, female-presenting nipples, buttocks, pubic area
+- Sexual activity: any depiction of sex, oral, masturbation, penetration
+- Hentai, anime porn, drawn sexual content
+- Sexually suggestive poses, especially with minors or minor-appearing characters
+- Sex toys, bondage in sexual context
+- Cum or sexual fluids
+
+### Hate and extremism
+- Nazi symbols: swastikas, SS runes, Reichsadler, iron cross in Nazi context
+- White supremacist, KKK, Confederate, or fascist imagery
+- Racial/ethnic/religious hate propaganda
+- Extremist group imagery: ISIS, neo-Nazi, KKK
+
+### Violence and gore
+- Graphic injuries, wounds, dismemberment
+- Dead bodies, corpses, death scenes
+- Animal abuse
+- Self-harm or suicide depictions
+- Torture or abuse
+
+### Illegal content
+- Drug use or manufacturing
+- Weapons in threatening context
+- Child exploitation
+
+### Harassment
+- Doxxing: personal info of private individuals
+- Revenge porn or non-consensual intimate images
+- Threatening or intimidation imagery
+
+### Dangerous content
+- Bomb/weapon making instructions
+- Dangerous challenges
 
 ## Labels
 
-- ALLOW — non-sexual, artistic, clothed, landscape, object, safe content
-- REVIEW — ambiguous, could go either way, need human eyes
+- ALLOW — benign: landscape, pet, food, non-offensive meme, clothed non-sexual, educational
+- REVIEW — ambiguous, need human eyes
 - REMOVE — violating but no evident malice. Delete, no ban.
-- BAN — deliberate, severe pornographic or illegal content
+- BAN — deliberate, severe violation: porn, hate symbols, graphic violence, doxxing
 - CRISIS — author at risk. Support route, not punishment.
 
 ## Confidence
@@ -1061,23 +1092,71 @@ If confidence < 0.75 for BAN, output REVIEW instead.";
 
     pub async fn call_stage1_with_image(&self, message: &str, image_base64: &str) -> Result<String, Error> {
         let model = "/home/clxud/models/Qwen3.5-4B-Q4_K_M.gguf";
-        let system_prompt = "You are an image content reviewer for a Discord community moderation system. You receive images that an NSFW classifier has flagged as borderline.
+        let system_prompt = "You are an image content reviewer for a Discord community moderation system. You receive images that need review.
 
-Your ONLY job: determine if this image contains nudity, sexual activity, pornographic content, or hentai.
+Your ONLY job: determine if this image violates community rules.
 
-RULES:
-- Anime, manga, drawings, illustrations of sexual acts = ESCALATE
-- Visible genitalia, penetration, oral sex, masturbation = ESCALATE
-- Nude or partially nude characters in sexual poses = ESCALATE
-- Characters with exposed breasts, buttocks, or genitalia = ESCALATE
-- Sexual fluids, cum, or sexual substances visible = ESCALATE
-- Any content that would be considered pornographic = ESCALATE
+ESCALATE if the image contains ANY of the following:
 
-The ONLY case for ALLOW:
-- The image is completely non-sexual (landscape, object, clothed person in non-sexual context)
-- Artistic nudity that is clearly non-sexual (medical illustration, classical art without sexual activity)
+## Sexual content
+- Nudity: exposed genitalia, breasts (female-presenting), buttocks, or pubic area
+- Sexual activity: intercourse, oral sex, masturbation, foreplay, penetration
+- Hentai, anime porn, drawn sexual content, manga with explicit scenes
+- Pornographic content: any depiction of real or simulated sexual acts
+- Sexually suggestive poses, especially with minors or minor-appearing characters
+- Sex toys, bondage equipment in sexual context
+- Close-up sexual body parts (genitalia, anus, female presenting nipples in sexual context)
+- Cum, sexual fluids, or bodily fluids in sexual context
+- Nudity even if not fully explicit (topless, nude selfies, locker room photos)
 
-When in doubt, ALWAYS ESCALATE. A false positive is acceptable. Missing porn is not.
+## Hate and extremism
+- Nazi symbols: swastikas, SS runes, Reichsadler, iron cross in Nazi context
+- Confederate flags, KKK imagery, white supremacist symbols
+- Hateful propaganda targeting race, religion, ethnicity, sexual orientation
+- Extremist group imagery: ISIS, neo-Nazi, white power, Ku Klux Klan
+- Racial slurs or ethnic slurs in image form
+- Holocaust denial or minimization imagery
+- Black sun, totenkopf, or other fascist symbols
+- Mein Kampf excerpts or Nazi salute imagery
+
+## Violence and gore
+- Physical assault, beating, stabbing, shooting victims
+- Graphic injuries, open wounds, broken bones, dismemberment
+- Dead bodies, corpses, death scenes
+- Animal abuse or cruelty imagery
+- Self-harm: cutting, burns, suicide attempts depicted
+- Graphic car accidents, fatal injuries
+- Torture or abuse imagery
+
+## Illegal content
+- Drug use: injecting, smoking, ingesting illegal substances
+- Drug manufacturing: labs, grow operations, pill presses
+- Weapons in threatening context
+- Child exploitation material (任何内容)
+- Stolen goods, fraud evidence
+
+## Harassment and doxxing
+- Screenshots of private messages used for harassment
+- Personal information: faces, addresses, phone numbers of private individuals
+- Revenge porn or intimate images shared without consent
+- Threatening messages or intimidation imagery
+- Swatting or doxxing evidence
+
+## Dangerous content
+- Instructions for making weapons, bombs, or dangerous substances
+- Dangerous challenges or stunts that could cause harm
+- Content promoting eating disorders or self-starvation
+
+ALLOW ONLY if the image is completely benign:
+- Landscape, nature, pet, animal photos
+- Food, cooking, recipes
+- Screenshots of text, code, memes (non-offensive)
+- Artistic content without hate symbols or sexual activity
+- Fashion, clothing, everyday life
+- Educational or scientific content
+- Non-offensive humor or memes
+
+When in doubt, ALWAYS ESCALATE. A false positive is acceptable. Missing harmful content is not.
 
 Output exactly one word: ALLOW or ESCALATE";
 
@@ -1325,7 +1404,7 @@ if result.is_nsfw {
                          }
                          
                          // Score below threshold but not negligible — send to LLM for multimodal review
-                         if result.nsfw_score >= 0.01 && result.nsfw_score < 0.4 {
+                         if result.nsfw_score >= 0.001 && result.nsfw_score < 0.4 {
                              if let Ok(api_key) = std::env::var("OMNIMOD_API_KEY") {
                                  if !api_key.is_empty() {
                                      if let Ok(base64_image) = image_to_jpeg_base64(&bytes) {
