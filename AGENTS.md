@@ -123,3 +123,10 @@ Register in `main.rs` under `framework.options().commands`. Each module lives in
 - **Cloudflare blocks Python urllib**: Default Python User-Agent gets 403'd. Set `User-Agent: curl/8.14.1` and `Accept: */*` headers in test scripts.
 - **Prompt tuning for small models**: The 4B model needs explicit direction rules. Imperatives and information-sharing must be explicitly called out as other-directed (BAN), not self-directed (CRISIS). The model defaults to CRISIS for ambiguous direction without explicit guidance.
 - **Benchmark**: `test_omnimod.py` tests stage 2 prompt only. Run with `OMNIMOD_API_KEY=<key> python3 test_omnimod.py`. Target: 27/27.
+
+## Pre-Stage Pattern Expansion
+
+- Pre-stage has two pattern sets: **raw** (matches unnormalized text with evasion) and **normalized** (matches after leetspeak/unicode normalization)
+- Raw patterns cover: URL shorteners, porn/hentai site domains, Reddit NSFW subreddit links, Discord/Telegram invite links with porn keywords, contextual phrases ("find porn", "check out porn", "you can find porn at"), URL evasion (spaces in URLs, hxxp://, [.] dots, dot words)
+- Standalone keywords added: hentai, porn, pornhub, xvideos, xnxx, nsfw, rule 34, rule34, adult content, 18+, xxx, free porn, find porn, find hentai, cum, boobs, pussy, anal, bdsm, fetish, slut
+- If new porn/hentai sites or URL shorteners emerge, add patterns to both `get_raw_regex_patterns()` and `get_keywords()` as needed
