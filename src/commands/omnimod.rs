@@ -1209,7 +1209,8 @@ Output exactly one word: ALLOW or ESCALATE";
 
 fn parse_stage2_output(text: &str) -> Result<StageResult, Error> {
     let json_start = text.find('{').unwrap_or(0);
-    let json_str = &text[json_start..];
+    let json_end = text.rfind('}').map(|i| i + 1).unwrap_or(text.len());
+    let json_str = &text[json_start..json_end];
     let parsed: serde_json::Value = serde_json::from_str(json_str)?;
 
     let label = parsed.get("label").and_then(|v| v.as_str()).unwrap_or("REVIEW").to_string();
