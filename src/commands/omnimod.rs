@@ -991,6 +991,105 @@ pub async fn handle_message(
                             return;
                         }
                     }
+                    
+                    // OCR: Extract text from image
+                    let ocr_text = if is_gif {
+                        crate::ocr::extract_text_from_gif(&bytes).unwrap_or_default()
+                    } else {
+                        match image::load_from_memory(&bytes) {
+                            Ok(img) => crate::ocr::extract_text_from_image(&img).unwrap_or_default(),
+                            Err(_) => String::new(),
+                        }
+                    };
+                    
+                    if !ocr_text.is_empty() {
+                        tracing::info!("omnimod: OCR extracted {} chars from image", ocr_text.len());
+                        let ocr_pre_result = run_pre_stage(&ocr_text, config.pre_stage_threshold).await;
+                        
+                        if ocr_pre_result.flagged {
+                            tracing::info!("omnimod: OCR text flagged: score={:.2} matches={}", ocr_pre_result.score, ocr_pre_result.matches.len());
+                            
+                            let _ = log_omnimod_flag(
+                                db,
+                                guild_id,
+                                msg.channel_id.get() as i64,
+                                msg.id.get() as i64,
+                                msg.author.id.get() as i64,
+                                &ocr_text,
+                                "ocr_pre_stage",
+                                Some("FLAGGED"),
+                                Some(ocr_pre_result.score),
+                                Some(&format!("OCR text flagged: {:?}", ocr_pre_result.matches.iter().map(|m| &m.category).collect::<Vec<_>>())),
+                                None,
+                            ).await;
+                            
+                            // Escalate to LLM for review
+                            if let Ok(api_key) = std::env::var("OMNIMOD_API_KEY") {
+                                if !api_key.is_empty() {
+                                    let client = NovitaClient::new(api_key);
+                                    let ocr_message = format!("[Image OCR text]: {}", ocr_text);
+                                    
+                                    match client.call_stage1(&ocr_message).await {
+                                        Ok(stage1_result) => {
+                                            tracing::info!("omnimod: OCR stage1={}", stage1_result);
+                                            
+                                            if stage1_result == "ESCALATE" {
+                                                match client.call_stage2(&ocr_message).await {
+                                                    Ok(stage2_result) => {
+                                                        tracing::info!("omnimod: OCR stage2={} confidence={:.2}", stage2_result.label, stage2_result.confidence);
+                                                        
+                                                        let action_taken = match stage2_result.label.as_str() {
+                                                            "BAN" => {
+                                                                let gid = serenity::GuildId::new(guild_id as u64);
+                                                                if let Ok(guild) = gid.to_partial_guild(http).await {
+                                                                    let _ = guild.ban_with_reason(http, msg.author.id, 7, "omnimod: banned by OCR text moderation").await;
+                                                                }
+                                                                let _ = msg.delete(http).await;
+                                                                "ocr_banned_and_deleted"
+                                                            }
+                                                            "REMOVE" => {
+                                                                let _ = msg.delete(http).await;
+                                                                "ocr_message_deleted"
+                                                            }
+                                                            "CRISIS" => {
+                                                                let _ = send_crisis_dm(http, msg).await;
+                                                                "ocr_crisis_dm_sent"
+                                                            }
+                                                            _ => "ocr_logged_for_review",
+                                                        };
+                                                        
+                                                        let case_number = log_omnimod_flag(
+                                                            db,
+                                                            guild_id,
+                                                            msg.channel_id.get() as i64,
+                                                            msg.id.get() as i64,
+                                                            msg.author.id.get() as i64,
+                                                            &ocr_text,
+                                                            "ocr_stage2",
+                                                            Some(&stage2_result.label),
+                                                            Some(stage2_result.confidence),
+                                                            Some(&stage2_result.reason),
+                                                            Some(action_taken),
+                                                        ).await.unwrap_or(0);
+                                                        
+                                                        if let Some(log_channel_id) = config.log_channel_id {
+                                                            let _ = send_ocr_log_embed(http, log_channel_id, msg, &stage2_result, &ocr_pre_result, case_number, action_taken, &ocr_text).await;
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::error!("omnimod: OCR stage2 error: {:?}", e);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("omnimod: OCR stage1 error: {:?}", e);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1190,6 +1289,35 @@ async fn send_image_log_embed(
         .field("nsfw_score", format!("{:.3}", result.nsfw_score), true)
         .field("dominant_class", &result.dominant_class, true)
         .field("reason", format!("image classification: {} (score: {:.3})", result.dominant_class, result.nsfw_score), false)
+        .color(0xF28080)
+        .timestamp(chrono::Utc::now());
+
+    let _ = channel.send_message(http, serenity::CreateMessage::new().embed(embed)).await;
+    Ok(())
+}
+
+async fn send_ocr_log_embed(
+    http: &serenity::Http,
+    log_channel_id: i64,
+    msg: &serenity::Message,
+    stage2: &StageResult,
+    pre_stage: &PreStageResult,
+    case_number: i64,
+    action_taken: &str,
+    ocr_text: &str,
+) -> Result<(), Error> {
+    let channel = serenity::ChannelId::new(log_channel_id as u64);
+    let embed = serenity::CreateEmbed::new()
+        .title(format!("case #{} — ocr text — {}", case_number, stage2.label))
+        .field("author", format!("<@{}>", msg.author.id), true)
+        .field("action", action_taken.replace('_', " "), true)
+        .field("ocr text", ocr_text.chars().take(1000).collect::<String>(), false)
+        .field("label", &stage2.label, true)
+        .field("confidence", format!("{:.2}", stage2.confidence), true)
+        .field("category", &stage2.category, true)
+        .field("target", &stage2.target, true)
+        .field("pre_stage_score", format!("{:.2}", pre_stage.score), true)
+        .field("reason", &stage2.reason, false)
         .color(0xF28080)
         .timestamp(chrono::Utc::now());
 

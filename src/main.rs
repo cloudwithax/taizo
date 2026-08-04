@@ -1,5 +1,6 @@
 mod commands;
 mod image_classifier;
+mod ocr;
 
 use poise::serenity_prelude as serenity;
 use sqlx::postgres::PgPoolOptions;
