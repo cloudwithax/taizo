@@ -1,4 +1,5 @@
 use crate::{Context, Error};
+use base64::Engine;
 use poise::serenity_prelude as serenity;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -747,6 +748,14 @@ fn is_non_latin_letter(c: char) -> bool {
         || (0xA720..=0xA7FF).contains(&cp))
 }
 
+fn image_to_jpeg_base64(bytes: &[u8]) -> Result<String, Error> {
+    let img = image::load_from_memory(bytes)?;
+    let mut buf = Vec::new();
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new(&mut buf);
+    encoder.encode_image(&img)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&buf))
+}
+
 #[derive(Deserialize)]
 struct NovitaResponse {
     choices: Vec<NovitaChoice>,
@@ -964,6 +973,64 @@ If BAN confidence < 0.75, output REVIEW instead. No floor for CRISIS.";
 
         parse_stage2_output(&content)
     }
+
+    pub async fn call_stage1_with_image(&self, message: &str, image_base64: &str) -> Result<String, Error> {
+        let model = "/home/clxud/models/Qwen3.5-4B-Q4_K_M.gguf";
+        let system_prompt = "You are a multimodal content moderator. You analyze images and text together to determine if the content violates community rules. You do not punish anyone. You decide only whether a human-grade reviewer should look at the content.
+
+You are looking for content that LOOKS clean on the surface but is not. Clean vocabulary is not evidence of innocence. Judge what the content is DOING, not which words it contains.
+
+Look at the image carefully. Check for:
+- Nudity or sexual content
+- Pornographic or hentai imagery
+- Violent or gory content
+- Hate symbols or imagery
+- Illegal or dangerous content
+- Any content that would be inappropriate in a community setting
+
+If the image is clearly safe and the text is benign, ALLOW.
+If the image or text combined suggest something harmful, ESCALATE.
+When in doubt, ESCALATE.
+
+Output exactly one word, nothing else: ALLOW or ESCALATE";
+
+        let body = serde_json::json!({
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": [
+                    {"type": "text", "text": message},
+                    {"type": "image_url", "image_url": {"url": format!("data:image/jpeg;base64,{}", image_base64)}}
+                ]}
+            ],
+            "temperature": 0.1,
+            "max_tokens": 50,
+            "chat_template_kwargs": {"enable_thinking": false}
+        });
+
+        let response = self.client
+            .post(OMNIMOD_BASE_URL)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+
+        let text = response.text().await?;
+        let parsed: NovitaResponse = serde_json::from_str(&text)?;
+        let msg = parsed.choices.first().map(|c| &c.message);
+        let content = msg
+            .and_then(|m| m.content.as_deref().or(m.reasoning_content.as_deref()))
+            .unwrap_or("")
+            .trim()
+            .to_uppercase();
+
+        if content.contains("ESCALATE") {
+            Ok("ESCALATE".to_string())
+        } else {
+            Ok("ALLOW".to_string())
+        }
+    }
 }
 
 fn parse_stage2_output(text: &str) -> Result<StageResult, Error> {
@@ -1141,29 +1208,96 @@ pub async fn handle_message(
                     };
                     if let Ok(result) = result {
                         tracing::info!("omnimod: image classification: {} (score: {:.3})", result.dominant_class, result.nsfw_score);
-                        if result.is_nsfw {
-                            let _ = msg.delete(http).await;
-                            let _ = log_omnimod_flag(
-                                db,
-                                guild_id,
-                                msg.channel_id.get() as i64,
-                                msg.id.get() as i64,
-                                msg.author.id.get() as i64,
-                                content,
-                                "image",
-                                Some(&result.dominant_class),
-                                Some(result.nsfw_score as f64),
-                                Some(&format!("nsfw image: {} (score: {:.3})", result.dominant_class, result.nsfw_score)),
-                                Some("image_nsfw_deleted"),
-                            ).await;
-                            if let Some(log_channel_id) = config.log_channel_id {
-                                let _ = send_image_log_embed(http, log_channel_id, msg, &result, attachment).await;
-                            }
-                            return;
-                        }
-                    }
-                    
-                    // OCR: Extract text from image
+if result.is_nsfw {
+                             let _ = msg.delete(http).await;
+                             let _ = log_omnimod_flag(
+                                 db,
+                                 guild_id,
+                                 msg.channel_id.get() as i64,
+                                 msg.id.get() as i64,
+                                 msg.author.id.get() as i64,
+                                 content,
+                                 "image",
+                                 Some(&result.dominant_class),
+                                 Some(result.nsfw_score as f64),
+                                 Some(&format!("nsfw image: {} (score: {:.3})", result.dominant_class, result.nsfw_score)),
+                                 Some("image_nsfw_deleted"),
+                             ).await;
+                             if let Some(log_channel_id) = config.log_channel_id {
+                                 let _ = send_image_log_embed(http, log_channel_id, msg, &result, attachment).await;
+                             }
+                             return;
+                         }
+                         
+                         // Score below threshold but not negligible — send to LLM for multimodal review
+                         if result.nsfw_score >= 0.01 && result.nsfw_score < 0.5 {
+                             if let Ok(api_key) = std::env::var("OMNIMOD_API_KEY") {
+                                 if !api_key.is_empty() {
+                                     if let Ok(base64_image) = image_to_jpeg_base64(&bytes) {
+                                         let client = NovitaClient::new(api_key);
+                                         let image_message = format!("[Image NSFW score: {:.3}, class: {}]. Review this image for policy violations.", result.nsfw_score, result.dominant_class);
+                                         
+                                         match client.call_stage1_with_image(&image_message, &base64_image).await {
+                                             Ok(llm_result) => {
+                                                 tracing::info!("omnimod: image LLM review: {}", llm_result);
+                                                 
+                                                 if llm_result == "ESCALATE" {
+                                                     // Run stage2 for adjudication
+                                                     match client.call_stage2(&image_message).await {
+                                                         Ok(stage2_result) => {
+                                                             tracing::info!("omnimod: image LLM stage2={} confidence={:.2}", stage2_result.label, stage2_result.confidence);
+                                                             
+                                                             let action_taken = match stage2_result.label.as_str() {
+                                                                 "BAN" => {
+                                                                     let gid = serenity::GuildId::new(guild_id as u64);
+                                                                     if let Ok(guild) = gid.to_partial_guild(http).await {
+                                                                         let _ = guild.ban_with_reason(http, msg.author.id, 7, "omnimod: banned by image LLM review").await;
+                                                                     }
+                                                                     let _ = msg.delete(http).await;
+                                                                     "image_llm_banned_and_deleted"
+                                                                 }
+                                                                 "REMOVE" => {
+                                                                     let _ = msg.delete(http).await;
+                                                                     "image_llm_message_deleted"
+                                                                 }
+                                                                 "CRISIS" => {
+                                                                     let _ = send_crisis_dm(http, msg).await;
+                                                                     "image_llm_crisis_dm_sent"
+                                                                 }
+                                                                 _ => "image_llm_logged_for_review",
+                                                             };
+                                                             
+                                                             let _ = log_omnimod_flag(
+                                                                 db,
+                                                                 guild_id,
+                                                                 msg.channel_id.get() as i64,
+                                                                 msg.id.get() as i64,
+                                                                 msg.author.id.get() as i64,
+                                                                 content,
+                                                                 "image_llm_review",
+                                                                 Some(&stage2_result.label),
+                                                                 Some(stage2_result.confidence),
+                                                                 Some(&format!("image LLM review: {} (score: {:.3}, class: {})", stage2_result.label, result.nsfw_score, result.dominant_class)),
+                                                                 Some(action_taken),
+                                                             ).await;
+                                                         }
+                                                         Err(e) => {
+                                                             tracing::warn!("omnimod: image LLM stage2 error: {}", e);
+                                                         }
+                                                     }
+                                                 }
+                                             }
+                                             Err(e) => {
+                                                 tracing::warn!("omnimod: image LLM stage1 error: {}", e);
+                                             }
+                                         }
+                                     }
+                                 }
+                             }
+                         }
+                     }
+                     
+                     // OCR: Extract text from image
                     let ocr_text = if is_gif {
                         crate::ocr::extract_text_from_gif(&bytes).unwrap_or_default()
                     } else {
