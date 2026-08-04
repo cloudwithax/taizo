@@ -130,3 +130,13 @@ Register in `main.rs` under `framework.options().commands`. Each module lives in
 - Raw patterns cover: URL shorteners, porn/hentai site domains, Reddit NSFW subreddit links, Discord/Telegram invite links with porn keywords, contextual phrases ("find porn", "check out porn", "you can find porn at"), URL evasion (spaces in URLs, hxxp://, [.] dots, dot words)
 - Standalone keywords added: hentai, porn, pornhub, xvideos, xnxx, nsfw, rule 34, rule34, adult content, 18+, xxx, free porn, find porn, find hentai, cum, boobs, pussy, anal, bdsm, fetish, slut
 - If new porn/hentai sites or URL shorteners emerge, add patterns to both `get_raw_regex_patterns()` and `get_keywords()` as needed
+
+## Multimodal Image Review
+
+- Images scoring >= 0.01 but below the 0.5 automatic NSFW threshold are sent to the multimodal LLM for review
+- Converts images to valid JPEG base64 using `image_to_jpeg_base64()` helper before sending
+- Uses `call_stage1_with_image()` with `image_url` content type for multimodal analysis
+- Falls back to `call_stage2()` for adjudication if stage1 escalates
+- Handles all actions: ban, remove, crisis DM, or log for review
+- GIFs are classified frame-by-frame; the worst frame score determines if LLM review is triggered
+- Both NSFW classification and OCR run independently on every image attachment
